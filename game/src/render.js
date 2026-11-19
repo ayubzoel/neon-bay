@@ -158,8 +158,25 @@ export function createRenderer(canvas) {
     hctx.fillRect(x0 - 4, y0 - 4, mw + 8, mh + 8);
     for (let i = 0; i < DISTRICT_RECTS.length; i += 1) {
       const r = DISTRICT_RECTS[i];
-      hctx.fillStyle = GROUND[i];
+      const locked = !state.unlocked[i];
+      // Locked districts read as dark grey on the minimap, with a padlock.
+      hctx.fillStyle = locked ? '#20242e' : GROUND[i];
       hctx.fillRect(x0 + r.x * sx, y0 + r.y * sy, r.w * sx, r.h * sy);
+      if (locked) {
+        const cx = x0 + (r.x + r.w / 2) * sx;
+        const cy = y0 + (r.y + r.h / 2) * sy;
+        hctx.strokeStyle = '#f8fafc';
+        hctx.lineWidth = 1.6;
+        hctx.beginPath();
+        hctx.arc(cx, cy - 2, 4, Math.PI, 0);
+        hctx.stroke();
+        hctx.fillStyle = '#f8fafc';
+        hctx.fillRect(cx - 6, cy - 2, 12, 9);
+        hctx.fillStyle = '#94a3b8';
+        hctx.font = 'bold 8px system-ui, sans-serif';
+        hctx.textAlign = 'center';
+        hctx.fillText('LOCKED', cx, cy + 18);
+      }
     }
     hctx.fillStyle = '#0e7490';
     for (const w of WATER_RECTS) hctx.fillRect(x0 + w.x * sx, y0 + w.y * sy, w.w * sx, w.h * sy);

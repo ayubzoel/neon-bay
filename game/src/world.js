@@ -1,15 +1,35 @@
 // Neon Bay — the map: three districts, streets, buildings, the airport,
 // the beach and the peaks, plus the collision tests every system uses.
-// Districts 1 and 2 are fenced off by barriers until missions unlock them.
+// Districts 1 and 2 are fenced off by full barrier walls until missions
+// unlock them; the only way through is a staffed gate on a through-road.
 //
-// v2: buildWorld also returns `meshes` — static THREE.Object3D meshes for
-// the whole world (ground, roads, buildings, trees, mountains, water,
-// airport, gates, shops, activity spots, safe house). The renderer adds
-// them to the scene once. Uses the global THREE (no import); geometry and
-// materials are shared wherever possible. Data (buildings, roads, trees,
-// solids, gates, shops, activitySpots, collides, ...) is unchanged from v1.
+// v3: the world is ~3x the v2 area (9600x5400). Downtown is a proper grid
+// (10 avenues x 9 streets), the beach has its own shore roads and boardwalk
+// strip, the peaks have mountain roads and a lake. Streets, sidewalks and
+// zebra crossings come from the road graph (roadgraph.js): NPCs walk the
+// sidewalks, traffic drives the lanes, police chase along the graph.
+//
+// buildWorld also returns `meshes` — static THREE.Object3D meshes for the
+// whole world. The renderer adds them to the scene once. Uses the global
+// THREE (no import); geometry and materials are shared wherever possible.
 import { AIRPORT, DISTRICT_RECTS, SAFE_HOUSE, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import { ACTIVITY_SPOTS, MOUNTAIN_PEAKS, SHOP_DEFS } from './data.js';
+import { buildRoadGraph } from './roadgraph.js';
+
+// v3 street layout: 10 avenues, 9 cross streets downtown; 4 shore avenues
+// and 6 shore roads at the beach; 2 mountain roads and 4 climbs in the peaks.
+export const AVENUES = [300, 900, 1500, 2100, 2700, 3300, 3900, 4500, 5100, 5700];
+export const STREETS = [1700, 2150, 2600, 3050, 3500, 3950, 4400, 4850, 5250];
+export const BEACH_AVENUES = [6400, 7200, 8000, 8800];
+export const BEACH_ROADS = [2000, 2600, 3000, 4000, 4400, 5000];
+export const PEAK_ROADS = [450, 900];
+export const PEAK_CLIMBS = [1500, 3600, 4500, 8400];
+// Through-roads with a gate: downtown streets 2600/4400 reach the beach,
+// downtown avenues 1500/4500 climb into the peaks.
+export const BEACH_GATE_YS = [2600, 4400];
+export const PEAK_GATE_XS = [1500, 4500];
+export const PEAK_BOUNDARY_Y = 1350;
+export const BEACH_BOUNDARY_X = 6000;
 
 function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -20,8 +40,8 @@ function pointInRect(x, y, r) {
 }
 
 export function districtAt(x, y) {
-  if (y < 900) return 2;
-  if (x >= 3000) return 1;
+  if (y < PEAK_BOUNDARY_Y) return 2;
+  if (x >= BEACH_BOUNDARY_X) return 1;
   return 0;
 }
 
@@ -40,7 +60,7 @@ const GROUND_COLORS = ['#3a3f4a', '#d9b96a', '#6b7a72'];
 
 /** Build the static 3D meshes for the world data. Returns THREE.Object3D[]. */
 function buildMeshes(data) {
-  const { buildings, roads, trees, gates, shops, activitySpots } = data;
+  const { buildings, roads, trees, gates, walls, shops, activitySpots, graph } = data;
   const meshes = [];
   const geoCache = new Map();
   const matCache = new Map();
@@ -78,13 +98,39 @@ function buildMeshes(data) {
   for (const w of WATER_RECTS) {
     meshes.push(groundPlane(w.w, w.h, lambert('#0e7490', { transparent: true, opacity: 0.9 }), w.x + w.w / 2, w.y + w.h / 2, 0.5));
   }
-  // Roads: dark strip + a dashed-looking centre line (one thin strip).
+  // Sidewalks first (a pale strip wider than the road), then the road itself
+  // on top, so every street reads as asphalt with a pavement on both sides.
+  const walkMat = lambert('#6b7280');
   const roadMat = lambert('#23272f');
   const lineMat = basic('#fde047', { transparent: true, opacity: 0.45 });
+  for (const r of roads) {
+    if (r.vertical) meshes.push(groundPlane(r.w + 40, r.h, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55));
+    else meshes.push(groundPlane(r.w, r.h + 40, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55));
+  }
   for (const r of roads) {
     meshes.push(groundPlane(r.w, r.h, roadMat, r.x + r.w / 2, r.y + r.h / 2, 0.6));
     if (r.vertical) meshes.push(groundPlane(3, r.h * 0.92, lineMat, r.x + r.w / 2, r.y + r.h / 2, 0.7));
     else meshes.push(groundPlane(r.w * 0.92, 3, lineMat, r.x + r.w / 2, r.y + r.h / 2, 0.7));
+  }
+  // Zebra crossings: one striped square per intersection (a canvas texture
+  // with white bars, so each crossing is a single mesh, not a dozen).
+  const zebraCanvas = document.createElement('canvas');
+  zebraCanvas.width = 64;
+  zebraCanvas.height = 64;
+  const zctx = zebraCanvas.getContext('2d');
+  zctx.clearRect(0, 0, 64, 64);
+  zctx.fillStyle = 'rgba(248, 250, 252, 0.85)';
+  for (let i = 4; i < 64; i += 12) {
+    zctx.fillRect(i, 2, 6, 60);
+    zctx.fillRect(2, i, 60, 6);
+  }
+  const zebraTex = new THREE.CanvasTexture(zebraCanvas);
+  const zebraMat = new THREE.MeshBasicMaterial({ map: zebraTex, transparent: true, opacity: 0.8 });
+  if (graph) {
+    for (const n of graph.nodes) {
+      if (!n.crossing) continue;
+      meshes.push(groundPlane(76, 76, zebraMat, n.x, n.y, 0.75));
+    }
   }
 
   // Shared window texture: one canvas, one texture, tinted per building
@@ -176,14 +222,60 @@ function buildMeshes(data) {
   towerTop.position.set(AIRPORT.x + 120, 96, AIRPORT.y + 90);
   meshes.push(towerTop);
 
-  // Locked-district gates: red barriers. Tagged with the district so the
-  // renderer can hide them once the district unlocks.
-  for (const g of gates) {
-    const m = new THREE.Mesh(unitBox, lambert('#dc2626'));
-    m.scale.set(g.w, 26, g.h);
-    m.position.set(g.x + g.w / 2, 13, g.y + g.h / 2);
-    m.userData.gateDistrict = g.district;
+  // District barrier walls: solid concrete, always present (only the gates
+  // in them ever open). Drawn as long grey slabs along each border.
+  for (const w of walls) {
+    const m = new THREE.Mesh(unitBox, lambert('#52525b'));
+    m.scale.set(w.w, 34, w.h);
+    m.position.set(w.x + w.w / 2, 17, w.y + w.h / 2);
     meshes.push(m);
+    const cap = new THREE.Mesh(unitBox, lambert('#f59e0b'));
+    cap.scale.set(w.w, 3, w.h + 2);
+    cap.position.set(w.x + w.w / 2, 35, w.y + w.h / 2);
+    meshes.push(cap);
+  }
+
+  // Gates: a staffed checkpoint in each through-road — two posts, a red
+  // barrier bar across the gap, and a guard booth beside it. Only the bar
+  // is tagged with the district, so the renderer hides just the bar when
+  // the district unlocks and the gate stands open; posts and booth stay.
+  for (const g of gates) {
+    const vertical = g.h > g.w;
+    const cx = g.x + g.w / 2;
+    const cy = g.y + g.h / 2;
+    // Barrier bar across the gap (tagged: hidden once unlocked).
+    const bar = new THREE.Mesh(unitBox, lambert('#dc2626'));
+    bar.scale.set(g.w, 26, g.h);
+    bar.position.set(cx, 13, cy);
+    bar.userData.gateDistrict = g.district;
+    meshes.push(bar);
+    const stripe = new THREE.Mesh(unitBox, basic('#f8fafc'));
+    stripe.scale.set(vertical ? 4 : g.w, 6, vertical ? g.h : 4);
+    stripe.position.set(cx, 28, cy);
+    stripe.userData.gateDistrict = g.district;
+    meshes.push(stripe);
+    // Posts at both ends of the gap.
+    for (const s of [-1, 1]) {
+      const post = new THREE.Mesh(unitBox, lambert('#f59e0b'));
+      if (vertical) {
+        post.scale.set(12, 40, 12);
+        post.position.set(cx, 20, cy + s * (g.h / 2 + 4));
+      } else {
+        post.scale.set(12, 40, 12);
+        post.position.set(cx + s * (g.w / 2 + 4), 20, cy);
+      }
+      meshes.push(post);
+    }
+    // Guard booth beside the gate.
+    const booth = new THREE.Mesh(unitBox, lambert('#0ea5e9'));
+    booth.scale.set(44, 30, 44);
+    if (vertical) booth.position.set(cx + 52, 15, cy + 56);
+    else booth.position.set(cx + 56, 15, cy - 52);
+    meshes.push(booth);
+    const boothRoof = new THREE.Mesh(unitBox, lambert('#155e75'));
+    boothRoof.scale.set(48, 4, 48);
+    boothRoof.position.set(booth.position.x, 32, booth.position.z);
+    meshes.push(boothRoof);
   }
 
   // Shops: coloured box + a flat sign slab on top.
@@ -228,35 +320,72 @@ export function buildWorld(rng) {
   const roads = [];
   const trees = [];
   const solids = [];
-  const gates = [
-    // Beach gate: the two roads crossing x = 3000.
-    { x: 2990, y: 1450, w: 24, h: 110, district: 1, label: 'Beach Gate' },
-    { x: 2990, y: 3050, w: 24, h: 110, district: 1, label: 'Beach Gate' },
-    // Peaks gate: the roads crossing y = 900.
-    { x: 650, y: 890, w: 110, h: 24, district: 2, label: 'Peaks Gate' },
-    { x: 2350, y: 890, w: 110, h: 24, district: 2, label: 'Peaks Gate' },
+
+  // ---- Barrier walls + gates (v3) -------------------------------------
+  // The wall runs the whole length of each district border; the only gaps
+  // are the gate openings on the through-roads. Wall pieces are solids,
+  // gates are separate so they can open when the district unlocks.
+  const gates = [];
+  for (const gy of BEACH_GATE_YS) {
+    gates.push({ x: BEACH_BOUNDARY_X - 12, y: gy - 32, w: 24, h: 64, district: 1, label: 'Beach Gate' });
+  }
+  for (const gx of PEAK_GATE_XS) {
+    gates.push({ x: gx - 32, y: PEAK_BOUNDARY_Y - 12, w: 64, h: 24, district: 2, label: 'Peaks Gate' });
+  }
+  const walls = [];
+  function wallRun(district, horizontal, fixed, from, to, gaps) {
+    // gaps: sorted [start, end] intervals along the run that stay open.
+    let cur = from;
+    const sorted = [...gaps].sort((a, b) => a[0] - b[0]);
+    for (const [gs, ge] of sorted) {
+      if (gs > cur) walls.push(horizontal
+        ? { x: cur, y: fixed - 12, w: gs - cur, h: 24, district }
+        : { x: fixed - 12, y: cur, w: 24, h: gs - cur, district });
+      cur = Math.max(cur, ge);
+    }
+    if (to > cur) walls.push(horizontal
+      ? { x: cur, y: fixed - 12, w: to - cur, h: 24, district }
+      : { x: fixed - 12, y: cur, w: 24, h: to - cur, district });
+  }
+  // Beach wall: x = 6000, y 1350..5400, gaps at the two through streets.
+  wallRun(1, false, BEACH_BOUNDARY_X, PEAK_BOUNDARY_Y, WORLD_HEIGHT,
+    BEACH_GATE_YS.map((gy) => [gy - 32, gy + 32]));
+  // Peaks wall: y = 1350, x 0..9600, gaps at the two through avenues.
+  wallRun(2, true, PEAK_BOUNDARY_Y, 0, WORLD_WIDTH,
+    PEAK_GATE_XS.map((gx) => [gx - 32, gx + 32]));
+  for (const w of walls) solids.push(w);
+
+  // ---- Roads -----------------------------------------------------------
+  // City grid: 10 avenues x 9 streets.
+  for (const x of AVENUES) roads.push({ x: x - 32, y: PEAK_BOUNDARY_Y, w: 64, h: WORLD_HEIGHT - PEAK_BOUNDARY_Y, vertical: true });
+  for (const y of STREETS) roads.push({ x: 0, y: y - 32, w: BEACH_BOUNDARY_X, h: 64, vertical: false });
+  // Beach: shore avenues + shore roads (through-roads 2600/4400 continue).
+  for (const x of BEACH_AVENUES) roads.push({ x: x - 32, y: PEAK_BOUNDARY_Y, w: 64, h: WORLD_HEIGHT - PEAK_BOUNDARY_Y, vertical: true });
+  for (const y of BEACH_ROADS) roads.push({ x: BEACH_BOUNDARY_X, y: y - 32, w: 9200 - BEACH_BOUNDARY_X, h: 64, vertical: false });
+  // Peaks: two mountain roads; the y=450 road is split around the lake.
+  roads.push({ x: 0, y: 450 - 32, w: 6500, h: 64, vertical: false });
+  roads.push({ x: 8100, y: 450 - 32, w: WORLD_WIDTH - 8100, h: 64, vertical: false });
+  roads.push({ x: 0, y: 900 - 32, w: WORLD_WIDTH, h: 64, vertical: false });
+  for (const x of PEAK_CLIMBS) roads.push({ x: x - 32, y: 0, w: 64, h: PEAK_BOUNDARY_Y, vertical: true });
+
+  // The road graph: intersections, lanes, sidewalks, zebra crossings.
+  const gateNodes = [
+    ...BEACH_GATE_YS.map((gy) => ({ x: BEACH_BOUNDARY_X, y: gy, district: 1 })),
+    ...PEAK_GATE_XS.map((gx) => ({ x: gx, y: PEAK_BOUNDARY_Y, district: 2 })),
   ];
+  const graph = buildRoadGraph(roads, gateNodes, districtAt);
 
-  // City grid streets.
-  const streetXs = [300, 700, 1100, 1500, 1900, 2300, 2700];
-  const streetYs = [1100, 1500, 1900, 2300, 2700, 3100, 3400];
-  for (const x of streetXs) roads.push({ x: x - 32, y: 900, w: 64, h: 2700, vertical: true });
-  for (const y of streetYs) roads.push({ x: 0, y: y - 32, w: 3000, h: 64, vertical: false });
-  // Beach road and the mountain road.
-  roads.push({ x: 3168, y: 900, w: 64, h: 2700, vertical: true });
-  roads.push({ x: 3000, y: 1900, w: 1400, h: 64, vertical: false });
-  roads.push({ x: 0, y: 400, w: 4800, h: 64, vertical: false });
-  roads.push({ x: 1200, y: 400, w: 64, h: 500, vertical: true });
-  roads.push({ x: 3400, y: 400, w: 64, h: 500, vertical: true });
-
-  // City blocks: buildings fill the blocks between streets, with parks left open.
+  // ---- City blocks: buildings fill the blocks between streets ----------
   const cityColors = ['#3f4a5a', '#4a3b52', '#37474f', '#4e342e', '#2f3e46', '#5d4037'];
-  for (let bx = 0; bx < streetXs.length - 1; bx += 1) {
-    for (let by = 0; by < streetYs.length - 1; by += 1) {
-      const x0 = streetXs[bx] + 40;
-      const y0 = streetYs[by] + 40;
-      const x1 = streetXs[bx + 1] - 40;
-      const y1 = streetYs[by + 1] - 40;
+  for (let bx = 0; bx < AVENUES.length - 1; bx += 1) {
+    for (let by = 0; by < STREETS.length - 1; by += 1) {
+      // Blocks are inset 56 from the street centrelines (v3): the road is
+      // 32 half-wide and the sidewalk runs 32..52, so buildings must start
+      // past 52 or they would swallow the pavement NPCs walk on.
+      const x0 = AVENUES[bx] + 56;
+      const y0 = STREETS[by] + 56;
+      const x1 = AVENUES[bx + 1] - 56;
+      const y1 = STREETS[by + 1] - 56;
       if (x1 - x0 < 90 || y1 - y0 < 90) continue;
       if (rng.chance(0.18)) {
         // A park: trees instead of a building.
@@ -273,22 +402,31 @@ export function buildWorld(rng) {
     }
   }
 
-  // Beach: hotels along the boardwalk, palm trees on the sand.
+  // Beach: hotels in the blocks between the shore roads, palms on the sand.
   const beachColors = ['#f59e0b', '#0ea5e9', '#ec4899', '#f8fafc'];
-  for (let i = 0; i < 10; i += 1) {
-    const b = { x: 3300 + i * 100, y: 1050 + (i % 3) * 260, w: 90, h: 130, color: beachColors[i % beachColors.length], district: 1, tall: false };
-    buildings.push(b);
-    solids.push(b);
+  let hi = 0;
+  for (const hx of [6500, 7300, 8100]) {
+    for (const hy of [1700, 2750, 4150]) {
+      const b = { x: hx, y: hy, w: 120, h: 160, color: beachColors[hi % beachColors.length], district: 1, tall: false };
+      hi += 1;
+      buildings.push(b);
+      solids.push(b);
+    }
   }
-  for (let i = 0; i < 26; i += 1) trees.push({ x: rng.range(3600, 4350), y: rng.range(1000, 3500), kind: 'palm' });
+  for (let i = 0; i < 26; i += 1) trees.push({ x: rng.range(8900, 9150), y: rng.range(1500, 5300), kind: 'palm' });
 
-  // Peaks: cabins, pines and rocks.
+  // Peaks: cabins, pines and rocks (cabins keep clear of the lake).
+  const lake = WATER_RECTS[1];
   for (let i = 0; i < 8; i += 1) {
-    const b = { x: rng.range(200, 4500), y: rng.range(120, 780), w: 100, h: 80, color: '#6b4f2a', district: 2, tall: false };
+    const b = { x: rng.range(200, 9400), y: rng.range(120, 1250), w: 100, h: 80, color: '#6b4f2a', district: 2, tall: false };
+    if (rectsOverlap(b, { x: lake.x - 60, y: lake.y - 60, w: lake.w + 120, h: lake.h + 120 })) continue;
+    // Cabins must not sit on a road or its sidewalk, or pedestrians walking
+    // the pavement would have to slide around (or through) them.
+    if (roads.some((r) => rectsOverlap(b, { x: r.x - 56, y: r.y - 56, w: r.w + 112, h: r.h + 112 }))) continue;
     buildings.push(b);
     solids.push(b);
   }
-  for (let i = 0; i < 60; i += 1) trees.push({ x: rng.range(80, 4700), y: rng.range(60, 860), kind: 'pine' });
+  for (let i = 0; i < 60; i += 1) trees.push({ x: rng.range(80, 9500), y: rng.range(60, 1300), kind: 'pine' });
 
   // The safe house is a solid building with a door.
   const house = { x: SAFE_HOUSE.x, y: SAFE_HOUSE.y, w: SAFE_HOUSE.w, h: SAFE_HOUSE.h, color: '#7c3aed', district: 0, tall: false };
@@ -315,33 +453,38 @@ export function buildWorld(rng) {
     return collides(x + w / 2, y + h / 2, Math.max(w, h) / 2, unlocked);
   }
 
+  // Which locked district's barrier (wall or closed gate) is this point
+  // pushing against, if any? 0 = none. Used for the "locked" message.
+  function barrierDistrictAt(x, y, pad, unlocked) {
+    if (!unlocked) return 0;
+    for (const w of walls) {
+      if (unlocked[w.district]) continue;
+      if (x > w.x - pad && x < w.x + w.w + pad && y > w.y - pad && y < w.y + w.h + pad) return w.district;
+    }
+    for (const g of gates) {
+      if (unlocked[g.district]) continue;
+      if (x > g.x - pad && x < g.x + g.w + pad && y > g.y - pad && y < g.y + g.h + pad) return g.district;
+    }
+    return 0;
+  }
+
   function randomRoadPoint(district) {
-    const districtRoads = roads.filter((r) => districtAt(r.x + r.w / 2, r.y + r.h / 2) === district);
-    const road = districtRoads[Math.floor(rng.next() * districtRoads.length)] || roads[0];
-    return {
-      x: road.x + rng.range(8, Math.max(9, road.w - 8)),
-      y: road.y + rng.range(8, Math.max(9, road.h - 8)),
-    };
+    const p = graph.randomLanePoint(rng, [district]);
+    return p.point;
+  }
+
+  function randomSidewalkPoint(district) {
+    return graph.randomSidewalkPoint(rng, [district]);
   }
 
   function nearestRoadPoint(x, y) {
-    let best = null;
-    let bestD = Infinity;
-    for (const r of roads) {
-      const cx = Math.max(r.x, Math.min(x, r.x + r.w));
-      const cy = Math.max(r.y, Math.min(y, r.y + r.h));
-      const d = (cx - x) ** 2 + (cy - y) ** 2;
-      if (d < bestD) {
-        bestD = d;
-        best = { x: cx, y: cy };
-      }
-    }
-    return best;
+    return graph.nearestLanePoint(x, y);
   }
 
   const world = {
-    buildings, roads, trees, solids, gates, shops, activitySpots,
-    collides, collidesRect, randomRoadPoint, nearestRoadPoint,
+    buildings, roads, trees, solids, gates, walls, shops, activitySpots, graph,
+    collides, collidesRect, barrierDistrictAt,
+    randomRoadPoint, randomSidewalkPoint, nearestRoadPoint,
   };
   world.meshes = buildMeshes(world);
   return world;

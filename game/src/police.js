@@ -15,7 +15,7 @@ function spawnPoint(state, world) {
     const dist = 620 + Math.random() * 260;
     const x = hero.x + Math.cos(angle) * dist;
     const y = hero.y + Math.sin(angle) * dist;
-    if (x < 40 || y < 40 || x > 4760 || y > 3560) continue;
+    if (x < 40 || y < 40 || x > 9560 || y > 5360) continue;
     if (world.collides(x, y, 20, state.unlocked)) continue;
     return { x, y };
   }
@@ -29,7 +29,7 @@ function makePolice(kind, x, y) {
     heli: { speed: 260, hp: 120 },
     tank: { speed: 120, hp: 400 },
   }[kind];
-  return { kind, x, y, angle: 0, speed: 0, hp: stats.hp, maxHp: stats.hp, shootCd: 1 + Math.random(), ramCd: 0 };
+  return { kind, x, y, angle: 0, speed: 0, hp: stats.hp, maxHp: stats.hp, shootCd: 1 + Math.random(), ramCd: 0, path: null, pathIdx: 0, repathCd: 0 };
 }
 
 function maintainForce(state, world) {
@@ -98,7 +98,36 @@ export function updatePolice(state, world, dt) {
       p.y += Math.sin(p.angle) * p.speed * dt;
       policeShoot(state, p, targetX, targetY);
     } else if (p.kind === 'tank') {
-      steerToward(p, targetX, targetY, dt, 0.9);
+      // Ground units chase along the road graph (v3): re-path to the
+      // player's nearest intersection every ~1.2 s, follow the waypoints,
+      // and only fall back to a straight line when no road route exists
+      // (e.g. the player is off-road in a park). Tanks take the same route,
+      // just slower. Helicopters still fly straight.
+      p.repathCd -= dt;
+      if (p.repathCd <= 0 || !p.path) {
+        p.repathCd = 1.2;
+        const nodePath = world.graph.findPath(p.x, p.y, targetX, targetY, state.unlocked);
+        if (nodePath && nodePath.length > 1) {
+          p.path = [...nodePath.slice(1), { x: targetX, y: targetY }];
+          p.pathIdx = 0;
+        } else {
+          p.path = null;
+        }
+      }
+      let wx = targetX;
+      let wy = targetY;
+      if (p.path && p.pathIdx < p.path.length) {
+        wx = p.path[p.pathIdx].x;
+        wy = p.path[p.pathIdx].y;
+        if (Math.hypot(wx - p.x, wy - p.y) < 46) {
+          p.pathIdx += 1;
+          if (p.pathIdx < p.path.length) {
+            wx = p.path[p.pathIdx].x;
+            wy = p.path[p.pathIdx].y;
+          }
+        }
+      }
+      steerToward(p, wx, wy, dt, 0.9);
       p.speed = Math.min(120, p.speed + 60 * dt);
       const nx = p.x + Math.cos(p.angle) * p.speed * dt;
       const ny = p.y + Math.sin(p.angle) * p.speed * dt;
@@ -108,8 +137,32 @@ export function updatePolice(state, world, dt) {
       }
       policeShoot(state, p, targetX, targetY);
     } else {
+      p.repathCd -= dt;
+      if (p.repathCd <= 0 || !p.path) {
+        p.repathCd = 1.2;
+        const nodePath = world.graph.findPath(p.x, p.y, targetX, targetY, state.unlocked);
+        if (nodePath && nodePath.length > 1) {
+          p.path = [...nodePath.slice(1), { x: targetX, y: targetY }];
+          p.pathIdx = 0;
+        } else {
+          p.path = null;
+        }
+      }
+      let wx = targetX;
+      let wy = targetY;
+      if (p.path && p.pathIdx < p.path.length) {
+        wx = p.path[p.pathIdx].x;
+        wy = p.path[p.pathIdx].y;
+        if (Math.hypot(wx - p.x, wy - p.y) < 40) {
+          p.pathIdx += 1;
+          if (p.pathIdx < p.path.length) {
+            wx = p.path[p.pathIdx].x;
+            wy = p.path[p.pathIdx].y;
+          }
+        }
+      }
       const top = p.kind === 'bike' ? 390 : 330;
-      steerToward(p, targetX, targetY, dt, 2.6);
+      steerToward(p, wx, wy, dt, 2.6);
       p.speed = Math.min(top, p.speed + 260 * dt);
       const nx = p.x + Math.cos(p.angle) * p.speed * dt;
       const ny = p.y + Math.sin(p.angle) * p.speed * dt;

@@ -1,8 +1,9 @@
 // Neon Bay — shared constants: world size, districts, tuning, prices.
 // Every number the other modules need lives here, so the game is tuned in one place.
 export const TILE = 32;
-export const WORLD_WIDTH = 4800;
-export const WORLD_HEIGHT = 3600;
+// v3: ~3x the v2 area (4800x3600 = 17.28M -> 9600x5400 = 51.84M units^2).
+export const WORLD_WIDTH = 9600;
+export const WORLD_HEIGHT = 5400;
 
 // Districts, west to east and south to north. District 0 is open at the start;
 // district 1 (beach) opens after main mission 20, district 2 (mountains) after 40.
@@ -12,16 +13,21 @@ export const DISTRICTS = [
   { id: 2, name: 'Cinder Peaks', short: 'Peaks', color: '#5b6b7a', locked: true },
 ];
 export const DISTRICT_RECTS = [
-  { x: 0, y: 900, w: 3000, h: 2700 }, // city: south-west block
-  { x: 3000, y: 900, w: 1800, h: 2700 }, // beach: east strip
-  { x: 0, y: 0, w: 4800, h: 900 }, // mountains: north band
+  { x: 0, y: 1350, w: 6000, h: 4050 }, // city: south-west block
+  { x: 6000, y: 1350, w: 3600, h: 4050 }, // beach: east strip
+  { x: 0, y: 0, w: 9600, h: 1350 }, // mountains: north band
 ];
 // Open water runs along the far east edge and a lake sits in the peaks.
 export const WATER_RECTS = [
-  { x: 4400, y: 900, w: 400, h: 2700 },
-  { x: 3300, y: 60, w: 700, h: 320 },
+  { x: 9200, y: 1350, w: 400, h: 4050 },
+  { x: 6600, y: 90, w: 1400, h: 480 },
 ];
-export const AIRPORT = { x: 2050, y: 2650, w: 850, h: 600, runway: { x: 2200, y: 2900, w: 560, h: 90 } };
+// Airport, south-east downtown (moved from the v2 spot for the bigger map).
+export const AIRPORT = { x: 3900, y: 4300, w: 1700, h: 900, runway: { x: 4050, y: 4650, w: 1200, h: 120 } };
+// Safe house: KEPT at its v2 spot on purpose. player.js checks the door at
+// the literal (495, 1610) and shops.js sleeps/garages the car at (560, 1620);
+// both files are outside this build's scope, so moving the house would break
+// entering it. It still sits in downtown, a short walk from the start.
 export const SAFE_HOUSE = { x: 420, y: 1500, w: 150, h: 110, door: { x: 495, y: 1610 } };
 
 export const STEP = 1 / 60;

@@ -168,8 +168,8 @@ export function updateMissions(state, dt) {
     if (checkReach(state, active, active.x, active.y)) {
       if (active.type === 'escort' && active.stage === 'go') {
         active.stage = 'return';
-        active.x = 940;
-        active.y = 1660;
+        active.x = 1740;
+        active.y = 2558;
         showMessage(state, 'Picked up the passenger — now take them to the Neon Diner.');
         continue;
       }

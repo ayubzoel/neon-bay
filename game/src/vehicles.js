@@ -6,8 +6,8 @@
 // Only the drawing is 3D now: drawVehicle/drawVehicles build pooled
 // THREE groups (body + cabin + wheels, hull, fuselage + wings) via the
 // renderer's mesh pool. Meshes face +X; rotation.y = -angle (v1 heading).
-import { VEHICLE_STATS } from './config.js';
-import { activeCharacter } from './state.js';
+import { AIRPORT, VEHICLE_STATS } from './config.js';
+import { activeCharacter, showMessage } from './state.js';
 import { isWater } from './world.js';
 
 const CAR_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#22c55e', '#a855f7', '#e2e8f0', '#14b8a6', '#f97316'];
@@ -25,27 +25,80 @@ function makeVehicle(kind, x, y, angle, owner) {
     owner: owner || 'parked',
     modSpeed: 0, modArmor: 0,
     waypoint: null, waitTimer: 0,
+    // Traffic state on the road graph (v3): the segment the car drives on,
+    // its position along it (0..1) and its direction (+1 = a->b, -1 = b->a).
+    seg: null, segT: 0, segDir: 1,
   };
+}
+
+/** Put a traffic car on a random graph segment, in its right-hand lane. */
+function placeOnGraph(world, rng, district) {
+  const pick = world.graph.randomLanePoint(rng, [district]);
+  const seg = pick.seg;
+  return {
+    seg: seg.id,
+    segT: segTOf(seg, pick.point),
+    segDir: pick.dir,
+    x: pick.point.x, y: pick.point.y,
+  };
+}
+
+function segTOf(seg, point) {
+  const dx = seg.bx - seg.ax;
+  const dy = seg.by - seg.ay;
+  const len2 = dx * dx + dy * dy || 1;
+  return Math.max(0, Math.min(1, ((point.x - seg.ax) * dx + (point.y - seg.ay) * dy) / len2));
 }
 
 /** Parked cars, traffic, boats at the pier and two planes at the airport. */
 export function spawnVehicles(state, world, rng) {
   const list = [];
-  for (let i = 0; i < 14; i += 1) {
-    const p = world.randomRoadPoint(0);
-    list.push(makeVehicle(rng.chance(0.25) ? 'bike' : 'car', p.x, p.y, rng.range(0, Math.PI * 2), 'parked'));
-  }
-  for (let i = 0; i < 6; i += 1) {
-    const p = world.randomRoadPoint(0);
-    const v = makeVehicle('car', p.x, p.y, rng.range(0, Math.PI * 2), 'traffic');
-    v.waypoint = world.randomRoadPoint(0);
+  // Parked cars sit in a lane on a road (v3: on the graph, not mid-block).
+  for (let i = 0; i < 16; i += 1) {
+    const spot = placeOnGraph(world, rng, 0);
+    const v = makeVehicle(rng.chance(0.25) ? 'bike' : 'car', spot.x, spot.y, 0, 'parked');
+    const seg = world.graph.segments[spot.seg];
+    const dx = (seg.bx - seg.ax) * spot.segDir;
+    const dy = (seg.by - seg.ay) * spot.segDir;
+    v.angle = Math.atan2(dy, dx);
     list.push(v);
   }
-  for (let i = 0; i < 3; i += 1) {
-    list.push(makeVehicle('boat', 4480 + rng.range(0, 200), rng.range(1200, 3200), rng.range(0, Math.PI * 2), 'parked'));
+  for (let i = 0; i < 4; i += 1) {
+    const spot = placeOnGraph(world, rng, 1);
+    const v = makeVehicle('car', spot.x, spot.y, 0, 'parked');
+    const seg = world.graph.segments[spot.seg];
+    v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+    list.push(v);
   }
-  list.push(makeVehicle('plane', 2350, 2945, 0, 'parked'));
-  list.push(makeVehicle('plane', 2500, 2945, 0, 'parked'));
+  for (let i = 0; i < 2; i += 1) {
+    const spot = placeOnGraph(world, rng, 2);
+    const v = makeVehicle('car', spot.x, spot.y, 0, 'parked');
+    const seg = world.graph.segments[spot.seg];
+    v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+    list.push(v);
+  }
+  // Traffic: downtown 12, beach 5, peaks 3 — all driving the graph.
+  const trafficPlan = [[0, 12], [1, 5], [2, 3]];
+  for (const [district, count] of trafficPlan) {
+    for (let i = 0; i < count; i += 1) {
+      const spot = placeOnGraph(world, rng, district);
+      const v = makeVehicle('car', spot.x, spot.y, 0, 'traffic');
+      v.seg = spot.seg;
+      v.segT = spot.segT;
+      v.segDir = spot.segDir;
+      const seg = world.graph.segments[spot.seg];
+      v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+      v.speed = 90 + rng.range(0, 50);
+      list.push(v);
+    }
+  }
+  // Boats in the open water along the east edge (x 9200-9600).
+  for (let i = 0; i < 3; i += 1) {
+    list.push(makeVehicle('boat', 9280 + rng.range(0, 220), rng.range(1600, 5000), rng.range(0, Math.PI * 2), 'parked'));
+  }
+  // Two planes on the new runway (x 4050-5250, y 4650-4770).
+  list.push(makeVehicle('plane', 4550, 4710, 0, 'parked'));
+  list.push(makeVehicle('plane', 4800, 4710, 0, 'parked'));
   // The player's starter car, parked by the safe house.
   const starter = makeVehicle('car', 620, 1620, 0, 'player');
   starter.color = '#22d3ee';
@@ -122,16 +175,22 @@ function driveVehicle(state, world, v, dt, input) {
     v.z = Math.min(320, v.z + dt * 60);
     if (input.moveY() > 0) v.z = Math.max(0, v.z - dt * 90);
   } else {
-    const onRunway = nx > 2200 && nx < 2760 && ny > 2880 && ny < 3010;
+    const rw = AIRPORT.runway;
+    const onRunway = nx > rw.x && nx < rw.x + rw.w && ny > rw.y && ny < rw.y + rw.h;
+    const hitBarrier = (px, py) => world.barrierDistrictAt(px, py, 24, state.unlocked);
     if (!world.collides(nx, v.y, radius, state.unlocked)) v.x = nx;
     else {
       v.speed *= -0.25;
       v.hp -= 4;
+      const bd = hitBarrier(nx, v.y);
+      if (bd) barrierMessage(state, bd);
     }
     if (!world.collides(v.x, ny, radius, state.unlocked)) v.y = ny;
     else {
       v.speed *= -0.25;
       v.hp -= 4;
+      const bd = hitBarrier(v.x, ny);
+      if (bd) barrierMessage(state, bd);
     }
     if (v.kind === 'plane' && onRunway && v.speed > stats.takeoffSpeed) v.z = 4;
   }
@@ -140,29 +199,82 @@ function driveVehicle(state, world, v, dt, input) {
   }
 }
 
+/** Locked-district message when the player's vehicle hits a barrier. */
+export function barrierMessage(state, district) {
+  const now = (typeof performance !== 'undefined' ? performance.now() : 0) / 1000;
+  if (state.barrierMsgAt && now - state.barrierMsgAt < 4) return;
+  state.barrierMsgAt = now;
+  showMessage(state, district === 1
+    ? 'Sunset Beach is locked — finish Main Mission 20 to open the gate.'
+    : 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.', 3);
+}
+
 function updateTraffic(state, world, dt, rng) {
-  for (const v of state.vehicles) {
-    if (v.owner !== 'traffic' || v.hp <= 0) continue;
-    if (!v.waypoint || Math.hypot(v.waypoint.x - v.x, v.waypoint.y - v.y) < 40) {
-      v.waypoint = world.randomRoadPoint(0);
+  const graph = world.graph;
+  const traffic = state.vehicles.filter((v) => v.owner === 'traffic' && v.hp > 0);
+  for (const v of traffic) {
+    let seg = graph.segments[v.seg];
+    if (!seg) {
+      // Recovered (e.g. loaded mid-game): drop onto the nearest segment.
+      const near = graph.nearestSegmentPoint(v.x, v.y);
+      v.seg = near.seg.id;
+      v.segT = near.t;
+      v.segDir = 1;
+      seg = near.seg;
     }
-    const target = Math.atan2(v.waypoint.y - v.y, v.waypoint.x - v.x);
-    let diff = target - v.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    v.angle += Math.max(-2.2 * dt, Math.min(2.2 * dt, diff));
+    // Keep distance: slow down (or stop) for a car ahead in the same lane,
+    // or for any car right in front of the nose.
+    let desired = 150;
+    for (const o of traffic) {
+      if (o === v) continue;
+      if (o.seg === v.seg && o.segDir === v.segDir) {
+        const ahead = (o.segT - v.segT) * v.segDir * seg.length;
+        if (ahead > 0 && ahead < 120) desired = ahead < 60 ? 0 : 45;
+      } else if (Math.hypot(o.x - v.x, o.y - v.y) < 64) {
+        const hx = Math.cos(v.angle);
+        const hy = Math.sin(v.angle);
+        const dot = ((o.x - v.x) * hx + (o.y - v.y) * hy) / Math.max(1, Math.hypot(o.x - v.x, o.y - v.y));
+        if (dot > 0.5) desired = 0;
+      }
+    }
     const stats = VEHICLE_STATS[v.kind];
-    v.speed = Math.min(150, v.speed + stats.accel * 0.4 * dt);
-    const nx = v.x + Math.cos(v.angle) * v.speed * dt;
-    const ny = v.y + Math.sin(v.angle) * v.speed * dt;
-    if (!world.collides(nx, ny, 14, state.unlocked)) {
-      v.x = nx;
-      v.y = ny;
-    } else {
-      v.waypoint = world.randomRoadPoint(0);
-      v.angle += Math.PI / 2;
+    if (v.speed < desired) v.speed = Math.min(desired, v.speed + stats.accel * 0.4 * dt);
+    else if (v.speed > desired) v.speed = Math.max(desired, v.speed - stats.accel * 0.8 * dt);
+    // Advance along the segment, in the right-hand lane.
+    v.segT += (v.segDir * v.speed * dt) / Math.max(1, seg.length);
+    const endNodeId = v.segDir >= 0 ? seg.b : seg.a;
+    if (v.segT >= 1 || v.segT <= 0) {
+      // Reached an intersection: pick a next segment at this node.
+      const node = graph.nodes[endNodeId];
+      const candidates = [];
+      for (const segId of node.segs) {
+        if (segId === v.seg) continue;
+        const next = graph.segments[segId];
+        const farId = next.a === endNodeId ? next.b : next.a;
+        const far = graph.nodes[farId];
+        // Never drive through a locked gate.
+        if (far.gateDistrict !== null && !state.unlocked[far.gateDistrict]) continue;
+        candidates.push({ seg: next, farId });
+      }
+      if (candidates.length === 0) {
+        // Dead end: turn around.
+        v.segDir = -v.segDir;
+        v.segT = Math.max(0, Math.min(1, v.segT));
+      } else {
+        // Prefer going straight (same axis), otherwise turn at random.
+        const straight = candidates.filter((c) => c.seg.vertical === seg.vertical);
+        const pick = (straight.length > 0 ? straight : candidates)[Math.floor(rng.next() * (straight.length > 0 ? straight.length : candidates.length))];
+        const next = pick.seg;
+        v.seg = next.id;
+        v.segDir = next.a === endNodeId ? 1 : -1;
+        v.segT = v.segDir >= 0 ? 0.02 : 0.98;
+        seg = next;
+      }
     }
-    void rng;
+    const p = graph.lanePoint(seg, v.segT, v.segDir);
+    v.x = p.x;
+    v.y = p.y;
+    v.angle = Math.atan2((seg.by - seg.ay) * v.segDir, (seg.bx - seg.ax) * v.segDir);
   }
 }
 

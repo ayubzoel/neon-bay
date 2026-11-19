@@ -367,6 +367,22 @@ function stepPlay(dt, input) {
     ui.showOver(`${hero.name} got taken down in ${state.unlocked[2] ? 'Cinder Peaks' : state.unlocked[1] ? 'Sunset Beach' : 'Downtown'}. The crew will remember this one.`);
     playSfx('wanted');
   }
+
+  // Locked-district barrier message (v3): the player on foot is blocked by
+  // world.collides inside player.js, which cannot report it — so the loop
+  // notices a hero pressed against a locked wall/gate and says why.
+  if (!state.playerVehicle && (input.moveX() !== 0 || input.moveY() !== 0)) {
+    const bd = world.barrierDistrictAt(hero.x, hero.y, 40, state.unlocked);
+    if (bd) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : 0) / 1000;
+      if (!state.barrierMsgAt || now - state.barrierMsgAt > 4) {
+        state.barrierMsgAt = now;
+        showMessage(state, bd === 1
+          ? 'Sunset Beach is locked — finish Main Mission 20 to open the gate.'
+          : 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.', 3);
+      }
+    }
+  }
 }
 
 function runShot(name) {

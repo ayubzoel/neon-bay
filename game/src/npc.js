@@ -1,8 +1,16 @@
-// Neon Bay — the people: pedestrians who wander the sidewalks, shopkeepers
+// Neon Bay — the people: pedestrians who walk the sidewalks, shopkeepers
 // behind their counters, and mission givers with a job for you. Talk with E,
 // pickpocket with Q — but getting caught brings the police.
+//
+// v3: pedestrians walk ONLY on sidewalks (roadgraph.js). A walk is a path
+// along the road graph: each leg is walked on its right-hand sidewalk, and
+// the road is crossed only at intersections, inside the zebra zone, when
+// the path turns onto a new street. Nobody cuts through blocks, parks or
+// buildings, and nobody wanders at random. Stationary NPCs (givers,
+// shopkeepers) never move. Fleeing pedestrians run along the sidewalks too.
 import { DIALOGUE_GREETINGS, DIALOGUE_TIPS, NPC_NAMES } from './data.js';
-import { activeCharacter, addMoney, addWanted, showMessage } from './state.js';
+import { activeCharacter, addMoney, addWanted } from './state.js';
+import { districtAt } from './world.js';
 
 const PED_COLORS = ['#f59e0b', '#22c55e', '#a855f7', '#14b8a6', '#f97316', '#e2e8f0', '#84cc16'];
 
@@ -15,24 +23,26 @@ function makePed(rng, x, y) {
     money: 10 + Math.floor(rng.next() * 90),
     color: rng.pick(PED_COLORS),
     state: 'walk',
-    targetX: x, targetY: y,
+    path: null, pathIdx: 0,
     waitTimer: rng.range(0, 3),
+    stuckTimer: 0,
     hp: 40,
   };
 }
 
 export function spawnNpcs(state, world, rng) {
   const list = [];
-  for (let i = 0; i < 46; i += 1) {
-    const p = world.randomRoadPoint(0);
+  // The map is ~3x the v2 area, so the crowds grow with it.
+  for (let i = 0; i < 60; i += 1) {
+    const p = world.randomSidewalkPoint(0);
     list.push(makePed(rng, p.x, p.y));
   }
-  for (let i = 0; i < 14; i += 1) {
-    const p = world.randomRoadPoint(1);
+  for (let i = 0; i < 20; i += 1) {
+    const p = world.randomSidewalkPoint(1);
     list.push(makePed(rng, p.x, p.y));
   }
-  for (let i = 0; i < 8; i += 1) {
-    const p = world.randomRoadPoint(2);
+  for (let i = 0; i < 12; i += 1) {
+    const p = world.randomSidewalkPoint(2);
     list.push(makePed(rng, p.x, p.y));
   }
   for (const shop of world.shops) {
@@ -42,9 +52,10 @@ export function spawnNpcs(state, world, rng) {
       shopId: shop.id, hp: 100,
     });
   }
-  // Rico, the diner owner who hands out the first missions, waits by the diner.
+  // Rico, the diner owner who hands out the first missions, waits on the
+  // sidewalk by the Neon Diner (1800, 2558).
   list.push({
-    kind: 'giver', name: 'Rico Alvarez', x: 940, y: 1660, angle: Math.PI / 2,
+    kind: 'giver', name: 'Rico Alvarez', x: 1740, y: 2558, angle: Math.PI / 2,
     speed: 0, money: 0, color: '#f59e0b', state: 'idle', hp: 100,
   });
   state.npcs = list;
@@ -57,47 +68,137 @@ function nearestBullet(state, npc) {
   return false;
 }
 
+// Districts this pedestrian may walk in: its own, plus any unlocked one.
+function allowedDistricts(state, npc) {
+  const cur = districtAt(npc.x, npc.y);
+  const out = [cur];
+  for (let d = 0; d < 3; d += 1) {
+    if (state.unlocked[d] && !out.includes(d)) out.push(d);
+  }
+  return out;
+}
+
+// Pick a new destination node and build the sidewalk path to it.
+function pickNewPath(state, world, npc, rng, minDist = 0) {
+  const allowed = allowedDistricts(state, npc);
+  for (let tries = 0; tries < 6; tries += 1) {
+    const node = world.graph.randomNode(rng, allowed);
+    if (!node) return false;
+    if (minDist > 0 && Math.hypot(node.x - npc.x, node.y - npc.y) < minDist) continue;
+    const nodePath = world.graph.findPath(npc.x, npc.y, node.x, node.y, state.unlocked);
+    if (!nodePath || nodePath.length < 2) continue;
+    const waypoints = world.graph.sidewalkWaypoints(nodePath, { x: npc.x, y: npc.y });
+    if (waypoints.length === 0) continue;
+    // Join: first walk along the sidewalk the pedestrian is already on, to
+    // the intersection where the new path starts — never cut straight across
+    // a road mid-block to reach the first waypoint. The hop from the join
+    // point to the first waypoint then happens inside the intersection
+    // (the zebra zone), where crossing is allowed.
+    const near = world.graph.nearestSegmentPoint(npc.x, npc.y);
+    if (near) {
+      const seg = near.seg;
+      const start = nodePath[0];
+      const rx = -(seg.by - seg.ay) / Math.max(1, seg.length);
+      const ry = (seg.bx - seg.ax) / Math.max(1, seg.length);
+      const cx = seg.ax + (seg.bx - seg.ax) * near.t;
+      const cy = seg.ay + (seg.by - seg.ay) * near.t;
+      const side = (npc.x - cx) * rx + (npc.y - cy) * ry >= 0 ? 1 : -1;
+      // If the start node lies on this segment, join it on this sidewalk;
+      // otherwise join the nearer end of this segment.
+      const dx = seg.bx - seg.ax;
+      const dy = seg.by - seg.ay;
+      const len2 = dx * dx + dy * dy || 1;
+      const tNode = ((start.x - seg.ax) * dx + (start.y - seg.ay) * dy) / len2;
+      let join;
+      if (tNode >= 0 && tNode <= 1) join = world.graph.sidewalkPoint(seg, tNode, side);
+      else {
+        const dA = Math.hypot(start.x - seg.ax, start.y - seg.ay);
+        const dB = Math.hypot(start.x - seg.bx, start.y - seg.by);
+        join = world.graph.sidewalkPoint(seg, dA <= dB ? 0 : 1, side);
+      }
+      if (Math.hypot(join.x - npc.x, join.y - npc.y) > 12) waypoints.unshift(join);
+    }
+    npc.path = waypoints;
+    npc.pathIdx = 0;
+    npc.stuckTimer = 0;
+    return true;
+  }
+  return false;
+}
+
+function followPath(state, world, npc, dt, speed) {
+  if (!npc.path || npc.pathIdx >= npc.path.length) return true;
+  const wp = npc.path[npc.pathIdx];
+  const dx = wp.x - npc.x;
+  const dy = wp.y - npc.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 10) {
+    npc.pathIdx += 1;
+    return npc.pathIdx >= npc.path.length;
+  }
+  npc.angle = Math.atan2(dy, dx);
+  const step = speed * dt;
+  const nx = npc.x + (dx / d) * step;
+  const ny = npc.y + (dy / d) * step;
+  // Sidewalk waypoints never enter a solid, but a peaks cabin can sit on a
+  // path: slide along it, and give up if truly stuck.
+  const movedX = !world.collides(nx, npc.y, 12, state.unlocked);
+  const movedY = !world.collides(npc.x, ny, 12, state.unlocked);
+  if (movedX) npc.x = nx;
+  if (movedY) npc.y = ny;
+  if (!movedX && !movedY) {
+    npc.stuckTimer += dt;
+    if (npc.stuckTimer > 2) {
+      npc.path = null;
+      npc.stuckTimer = 0;
+      return true;
+    }
+  } else {
+    npc.stuckTimer = 0;
+  }
+  return false;
+}
+
 export function updateNpcs(state, world, dt, rng) {
   const hero = activeCharacter(state);
   for (const npc of state.npcs) {
     if (npc.kind !== 'ped') continue;
     if (npc.state === 'flee') {
-      const dx = npc.x - hero.x;
-      const dy = npc.y - hero.y;
-      const d = Math.hypot(dx, dy) || 1;
-      npc.angle = Math.atan2(dy, dx);
-      const nx = npc.x + Math.cos(npc.angle) * 170 * dt;
-      const ny = npc.y + Math.sin(npc.angle) * 170 * dt;
-      if (!world.collides(nx, npc.y, 12, state.unlocked)) npc.x = nx;
-      if (!world.collides(npc.x, ny, 12, state.unlocked)) npc.y = ny;
-      if (Math.hypot(hero.x - npc.x, hero.y - npc.y) > 420) npc.state = 'walk';
+      const done = followPath(state, world, npc, dt, 170);
+      if (done || Math.hypot(hero.x - npc.x, hero.y - npc.y) > 420) {
+        npc.state = 'walk';
+        npc.path = null;
+        npc.waitTimer = rng.range(0, 2);
+      }
       continue;
     }
     if (nearestBullet(state, npc) || state.wanted >= 3) {
       npc.state = 'flee';
+      // Run away along the sidewalks, not in a straight line through walls.
+      if (!pickNewPath(state, world, npc, rng, 350)) {
+        npc.state = 'walk';
+        npc.path = null;
+      }
       continue;
     }
     if (npc.waitTimer > 0) {
       npc.waitTimer -= dt;
-      if (npc.waitTimer <= 0) {
-        const p = world.randomRoadPoint(0);
-        npc.targetX = p.x;
-        npc.targetY = p.y;
+      if (npc.waitTimer <= 0 && !pickNewPath(state, world, npc, rng)) {
+        npc.waitTimer = rng.range(1, 4);
       }
       continue;
     }
-    const dx = npc.targetX - npc.x;
-    const dy = npc.targetY - npc.y;
-    const d = Math.hypot(dx, dy);
-    if (d < 12) {
-      npc.waitTimer = rng.range(1, 5);
+    if (!npc.path) {
+      if (!pickNewPath(state, world, npc, rng)) {
+        npc.waitTimer = rng.range(1, 4);
+      }
       continue;
     }
-    npc.angle = Math.atan2(dy, dx);
-    const nx = npc.x + Math.cos(npc.angle) * npc.speed * dt;
-    const ny = npc.y + Math.sin(npc.angle) * npc.speed * dt;
-    if (!world.collides(nx, npc.y, 12, state.unlocked)) npc.x = nx;
-    if (!world.collides(npc.x, ny, 12, state.unlocked)) npc.y = ny;
+    const done = followPath(state, world, npc, dt, npc.speed);
+    if (done) {
+      npc.path = null;
+      npc.waitTimer = rng.range(1, 5);
+    }
   }
 }
 
