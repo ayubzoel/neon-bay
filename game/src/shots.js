@@ -1,79 +1,101 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Neon Bay — the screenshot scenes behind ?shot=start|play|chase|night.
+// Each one stages a fixed, deterministic scene from the real game state
+// (real rules, real entities, fixed positions), so the same seed always
+// gives the same frame. main.js paints the staged scene twice and sets
+// window.__shotReady for the screenshot.
+import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { startMainMission } from './missions.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function placeHeroInCar(state, x, y, angle) {
+  const hero = state.characters[state.activeChar];
+  const car = state.vehicles.find((v) => v.owner === 'player') || state.vehicles[0];
+  car.x = x;
+  car.y = y;
+  car.angle = angle;
+  car.speed = 120;
+  state.playerVehicle = car;
+  hero.x = x;
+  hero.y = y;
+  hero.angle = angle;
+  state.camera.x = x;
+  state.camera.y = y;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+function placePolice(state, positions) {
+  state.police = positions.map(([kind, x, y]) => ({
+    kind, x, y, angle: Math.PI, speed: 200, hp: kind === 'tank' ? 400 : kind === 'heli' ? 120 : 80,
+    maxHp: kind === 'tank' ? 400 : kind === 'heli' ? 120 : 80, shootCd: 2, ramCd: 0,
+  }));
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+export function stageShot(name, state, world) {
+  state.showMap = false;
+  if (name === 'start') {
+    state.screen = SCREEN_TITLE;
+    state.time.minutes = 9 * 60;
+    state.time.day = 1;
+    state.season = 'summer';
+    state.rain = 0;
+    state.camera.x = 1500;
+    state.camera.y = 2100;
+    state.money = 1250;
+    return { screen: SCREEN_TITLE };
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+  if (name === 'play') {
+    state.screen = SCREEN_PLAY;
+    state.time.minutes = 10 * 60 + 15;
+    state.season = 'summer';
+    state.rain = 0;
+    state.money = 1250;
+    state.wanted = 0;
+    startMainMission(state, 0);
+    placeHeroInCar(state, 1500, 1900, 0);
+    state.camera.x = 1500;
+    state.camera.y = 1900;
+    return { screen: SCREEN_PLAY };
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  if (name === 'chase') {
+    state.screen = SCREEN_PLAY;
+    state.time.minutes = 17 * 60 + 40;
+    state.season = 'summer';
+    state.rain = 0;
+    state.money = 3400;
+    state.wanted = 3;
+    startMainMission(state, 4);
+    placeHeroInCar(state, 1500, 1900, 0);
+    placePolice(state, [
+      ['car', 1150, 1900],
+      ['car', 1250, 1960],
+      ['bike', 1200, 1840],
+      ['bike', 1300, 1990],
+      ['car', 1050, 1870],
+    ]);
+    state.camera.x = 1500;
+    state.camera.y = 1900;
+    return { screen: SCREEN_PLAY };
+  }
+  if (name === 'night') {
+    state.screen = SCREEN_PLAY;
+    state.time.minutes = 23 * 60;
+    state.season = 'rainy';
+    state.rain = 0.8;
+    state.money = 5200;
+    state.wanted = 1;
+    state.unlocked[1] = true;
+    const hero = state.characters[state.activeChar];
+    const bike = state.vehicles.find((v) => v.kind === 'bike') || state.vehicles[0];
+    bike.x = 4200;
+    bike.y = 1800;
+    bike.angle = -Math.PI / 2;
+    bike.speed = 0;
+    state.playerVehicle = bike;
+    hero.x = 4200;
+    hero.y = 1800;
+    state.camera.x = 4200;
+    state.camera.y = 1800;
+    placePolice(state, [['car', 3900, 1800]]);
+    state.objective = 'Side job: Deliver the package to Pier 9 before dawn.';
+    return { screen: SCREEN_PLAY };
+  }
+  return { screen: SCREEN_TITLE };
 }

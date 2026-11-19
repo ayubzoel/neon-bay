@@ -1,53 +1,204 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
-
+// Neon Bay — keyboard, mouse and touch input. Held keys steer; one-shot
+// presses are edge-triggered so a press between frames is never lost.
+// Touch gets a virtual joystick plus FIRE / CAR / E / SWAP / RUN buttons.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
+const MOVE_KEYS = {
+  KeyW: [0, -1], ArrowUp: [0, -1],
+  KeyS: [0, 1], ArrowDown: [0, 1],
+  KeyA: [-1, 0], ArrowLeft: [-1, 0],
+  KeyD: [1, 0], ArrowRight: [1, 0],
+};
+const CONFIRM_KEYS = new Set(['Space', 'Enter']);
+const PAUSE_KEYS = new Set(['KeyP', 'Escape']);
 
-export function createInput(target) {
-  let left = false;
-  let right = false;
+export function createInput(canvas) {
+  const held = new Set();
+  const pressedSet = new Set();
   let actions = 0;
+  const mouse = { x: 0, y: 0, down: false, clicked: false };
+  const joy = { x: 0, y: 0, active: false };
+  const touchEdge = { enter: false, interact: false, switch: false };
+  let touchRun = false;
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
+  function onKeyDown(event) {
+    if (event.code === 'Tab') {
+      event.preventDefault();
+      if (!event.repeat) pressedSet.add('Tab');
+      return;
+    }
+    if (MOVE_KEYS[event.code] || event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+      held.add(event.code);
+      event.preventDefault();
+      return;
+    }
+    if (CONFIRM_KEYS.has(event.code)) {
+      if (!event.repeat) {
+        actions |= ACTION_CONFIRM;
+        pressedSet.add(event.code);
+      }
+      event.preventDefault();
+      return;
+    }
+    if (PAUSE_KEYS.has(event.code)) {
+      if (!event.repeat) {
+        actions |= ACTION_PAUSE;
+        pressedSet.add(event.code);
+      }
+      return;
+    }
+    if (!event.repeat) pressedSet.add(event.code);
+  }
+
+  window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+    held.delete(event.code);
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    held.clear();
+    mouse.down = false;
+    joy.x = 0;
+    joy.y = 0;
+    touchRun = false;
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+
+  canvas.addEventListener('pointermove', (event) => {
+    mouse.x = event.clientX;
+    mouse.y = event.clientY;
   });
+  canvas.addEventListener('pointerdown', (event) => {
+    mouse.x = event.clientX;
+    mouse.y = event.clientY;
+    mouse.down = true;
+    mouse.clicked = true;
+  });
+  window.addEventListener('pointerup', () => {
+    mouse.down = false;
+  });
+
+  // Touch controls: joystick + action buttons, wired to the same state.
+  const touchRoot = document.getElementById('touch');
+  const stick = document.getElementById('stick');
+  const knob = document.getElementById('stickKnob');
+  const isTouch = 'ontouchstart' in window || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  if (isTouch && touchRoot) touchRoot.classList.add('on');
+  if (stick) {
+    let stickPointer = null;
+    const updateStick = (clientX, clientY) => {
+      const rect = stick.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = (clientX - cx) / (rect.width / 2);
+      let dy = (clientY - cy) / (rect.height / 2);
+      const len = Math.hypot(dx, dy);
+      if (len > 1) {
+        dx /= len;
+        dy /= len;
+      }
+      joy.x = dx;
+      joy.y = dy;
+      joy.active = true;
+      knob.style.left = `${44 + dx * 40}px`;
+      knob.style.top = `${44 + dy * 40}px`;
+    };
+    stick.addEventListener('pointerdown', (event) => {
+      stickPointer = event.pointerId;
+      stick.setPointerCapture(event.pointerId);
+      updateStick(event.clientX, event.clientY);
+    });
+    stick.addEventListener('pointermove', (event) => {
+      if (event.pointerId === stickPointer) updateStick(event.clientX, event.clientY);
+    });
+    const releaseStick = () => {
+      stickPointer = null;
+      joy.x = 0;
+      joy.y = 0;
+      joy.active = false;
+      knob.style.left = '44px';
+      knob.style.top = '44px';
+    };
+    stick.addEventListener('pointerup', releaseStick);
+    stick.addEventListener('pointercancel', releaseStick);
+  }
+  function bindTouchButton(id, down, up) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      down();
+    });
+    el.addEventListener('pointerup', () => up && up());
+    el.addEventListener('pointercancel', () => up && up());
+    el.addEventListener('pointerleave', () => up && up());
+  }
+  bindTouchButton('btnFire', () => { mouse.down = true; mouse.clicked = true; }, () => { mouse.down = false; });
+  bindTouchButton('btnEnter', () => { touchEdge.enter = true; });
+  bindTouchButton('btnInteract', () => { touchEdge.interact = true; });
+  bindTouchButton('btnSwitch', () => { touchEdge.switch = true; });
+  bindTouchButton('btnRun', () => { touchRun = true; }, () => { touchRun = false; });
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    mouse,
+    get run() {
+      return held.has('ShiftLeft') || held.has('ShiftRight') || touchRun;
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
+    moveX() {
+      let x = 0;
+      for (const code of held) {
+        if (MOVE_KEYS[code]) x += MOVE_KEYS[code][0];
+      }
+      return Math.max(-1, Math.min(1, x + joy.x));
+    },
+    moveY() {
+      let y = 0;
+      for (const code of held) {
+        if (MOVE_KEYS[code]) y += MOVE_KEYS[code][1];
+      }
+      return Math.max(-1, Math.min(1, y + joy.y));
+    },
+    isDown(code) {
+      return held.has(code);
+    },
+    pressed(code) {
+      if (pressedSet.has(code)) {
+        pressedSet.delete(code);
+        return true;
+      }
+      if (code === 'KeyF' && touchEdge.enter) {
+        touchEdge.enter = false;
+        return true;
+      }
+      if (code === 'KeyE' && touchEdge.interact) {
+        touchEdge.interact = false;
+        return true;
+      }
+      if (code === 'Tab' && touchEdge.switch) {
+        touchEdge.switch = false;
+        return true;
+      }
+      return false;
+    },
     takeActions() {
       const taken = actions;
       actions = 0;
       return taken;
+    },
+    /** Clear per-frame edges after the frame's steps have read them.
+     *  Only the mouse click is cleared here: key presses stay queued so a
+     *  tap that lands while the frame is drawing is read by the next frame
+     *  instead of being lost. */
+    endFrame() {
+      mouse.clicked = false;
+    },
+    /** Drop queued edges while a panel or the title is up, so a key tapped
+     *  in a menu does not fire the moment play resumes. */
+    clearStaleEdges() {
+      mouse.clicked = false;
+      pressedSet.clear();
+      touchEdge.enter = false;
+      touchEdge.interact = false;
+      touchEdge.switch = false;
     },
   };
 }

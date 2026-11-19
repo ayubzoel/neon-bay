@@ -2,18 +2,147 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="icon" href="data:,">
+<title>Neon Bay — Open World Crime Game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 8, 16, 0.72); z-index: 20; padding: 12px; box-sizing: border-box; }
+  .panel.hidden { display: none; }
+  .card { background: #141926; border: 2px solid #22d3ee; border-radius: 14px; color: #eef1f5; max-width: 560px; width: 100%; max-height: 92vh; overflow-y: auto; padding: 22px 24px; box-sizing: border-box; box-shadow: 0 0 40px rgba(34, 211, 238, 0.35); }
+  .card h1 { margin: 0 0 4px; font-size: 42px; letter-spacing: 2px; color: #22d3ee; text-shadow: 0 0 18px rgba(34, 211, 238, 0.7); }
+  .card h2 { margin: 0 0 10px; font-size: 26px; color: #f472b6; }
+  .card p { color: #cbd5e1; line-height: 1.5; margin: 8px 0; }
+  .card .sub { color: #f59e0b; font-weight: 700; letter-spacing: 1px; }
+  .btn { display: block; width: 100%; margin: 8px 0; padding: 13px 16px; font-size: 17px; font-weight: 700; color: #0b0e14; background: #22d3ee; border: none; border-radius: 10px; cursor: pointer; }
+  .btn:hover { background: #67e8f9; }
+  .btn.secondary { background: #334155; color: #e2e8f0; }
+  .btn.secondary:hover { background: #475569; }
+  .btn.danger { background: #ef4444; color: #fff; }
+  .shop-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid #263048; }
+  .shop-item .name { font-weight: 700; }
+  .shop-item .desc { color: #94a3b8; font-size: 13px; }
+  .shop-item .buy { flex: 0 0 auto; padding: 8px 14px; font-size: 15px; }
+  .keys { font-size: 14px; color: #94a3b8; line-height: 1.7; }
+  .keys b { color: #e2e8f0; }
+  #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(20, 25, 38, 0.92); color: #fde68a; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 18px; font-weight: 700; z-index: 15; pointer-events: none; opacity: 0; transition: opacity 0.2s; max-width: 90vw; text-align: center; }
+  #toast.show { opacity: 1; }
+  #touch { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; }
+  #touch.on { display: block; }
+  #stick { position: absolute; left: 18px; bottom: 24px; width: 128px; height: 128px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.25); pointer-events: auto; }
+  #stickKnob { position: absolute; left: 44px; top: 44px; width: 40px; height: 40px; border-radius: 50%; background: rgba(34,211,238,0.7); }
+  .tbtn { position: absolute; pointer-events: auto; width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(20,25,38,0.65); color: #fff; font-weight: 800; font-size: 13px; }
+  .tbtn:active { background: rgba(34,211,238,0.8); }
+  #btnFire { right: 24px; bottom: 96px; background: rgba(239,68,68,0.65); }
+  #btnEnter { right: 100px; bottom: 40px; }
+  #btnInteract { right: 24px; bottom: 176px; }
+  #btnSwitch { right: 104px; bottom: 122px; }
+  #btnRun { right: 180px; bottom: 40px; }
+  @media (max-width: 640px) {
+    .card h1 { font-size: 30px; }
+    .card { padding: 16px; }
+    #toast { bottom: 190px; }
+  }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Neon Bay: an open-world crime game. Explore the city on foot or by car, take missions, and watch your wanted level."></canvas>
 <p id="status" role="status" aria-live="polite"></p>
+
+<div id="startScreen" class="panel">
+  <div class="card">
+    <h1>NEON BAY</h1>
+    <p class="sub">AN OPEN-WORLD CRIME STORY &mdash; DOWNTOWN &middot; SUNSET BEACH &middot; CINDER PEAKS</p>
+    <p>Leo Vance and Maya Reyes came to Neon Bay with empty pockets and big plans. Sixty main missions stand between them and the top of the city &mdash; and two locked districts, a five-star police force, and everyone who wants them gone.</p>
+    <p>Drive, swim, fly, race, play pool and golf, run shops, steal, and survive. Switch between Leo and Maya any time with <b>Tab</b>.</p>
+    <button class="btn" id="btnNew">New Game</button>
+    <button class="btn secondary" id="btnContinue">Continue</button>
+    <button class="btn secondary" id="btnHow">How to Play</button>
+    <p class="keys" id="howText" hidden>
+      <b>WASD / Arrows</b> move &middot; <b>Mouse</b> aim &middot; <b>Click</b> shoot &middot; <b>E</b> interact / talk &middot; <b>F</b> enter or exit a vehicle &middot; <b>R</b> reload &middot; <b>Q</b> pickpocket &middot; <b>Tab</b> switch character &middot; <b>Shift</b> run &middot; <b>Space</b> jump &middot; <b>1&ndash;6</b> weapons &middot; <b>M</b> map &middot; <b>Esc</b> pause.<br>
+      On phones: left stick to move, on-screen buttons to shoot, enter, interact and switch.
+    </p>
+  </div>
+</div>
+
+<div id="pauseMenu" class="panel hidden">
+  <div class="card">
+    <h2>Paused</h2>
+    <p>Neon Bay waits for no one &mdash; except right now.</p>
+    <button class="btn" id="btnResume">Resume</button>
+    <button class="btn secondary" id="btnSave">Save Game</button>
+    <button class="btn secondary" id="btnQuitTitle">Quit to Title</button>
+  </div>
+</div>
+
+<div id="overScreen" class="panel hidden">
+  <div class="card">
+    <h2>Wasted</h2>
+    <p id="overText">The streets of Neon Bay got the better of you this time.</p>
+    <button class="btn" id="btnRespawn">Respawn at the Safe House ($100)</button>
+    <button class="btn secondary" id="btnOverTitle">Quit to Title</button>
+  </div>
+</div>
+
+<div id="shopPanel" class="panel hidden">
+  <div class="card">
+    <h2 id="shopTitle">Shop</h2>
+    <p id="shopMoney"></p>
+    <div id="shopItems"></div>
+    <button class="btn secondary" id="btnCloseShop">Leave</button>
+  </div>
+</div>
+
+<div id="dialogPanel" class="panel hidden">
+  <div class="card">
+    <h2 id="dialogSpeaker">Someone</h2>
+    <p id="dialogText"></p>
+    <div id="dialogOptions"></div>
+  </div>
+</div>
+
+<div id="interiorPanel" class="panel hidden">
+  <div class="card">
+    <h2>Safe House</h2>
+    <p>Home sweet home. Change your look, check the garage, rest up.</p>
+    <button class="btn" id="btnWardrobe">Wardrobe — change clothes</button>
+    <button class="btn" id="btnGarage">Garage — stored cars</button>
+    <button class="btn" id="btnSleep">Sleep — heal up &amp; save</button>
+    <button class="btn secondary" id="btnLeaveHouse">Leave the safe house</button>
+  </div>
+</div>
+
+<div id="wardrobePanel" class="panel hidden">
+  <div class="card">
+    <h2>Wardrobe</h2>
+    <p>Your outfit shows on your character in the streets.</p>
+    <div id="wardrobeItems"></div>
+    <button class="btn secondary" id="btnCloseWardrobe">Done</button>
+  </div>
+</div>
+
+<div id="garagePanel" class="panel hidden">
+  <div class="card">
+    <h2>Garage</h2>
+    <p>Cars you parked here. Pick one to take out.</p>
+    <div id="garageItems"></div>
+    <button class="btn secondary" id="btnCloseGarage">Done</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="touch">
+  <div id="stick"><div id="stickKnob"></div></div>
+  <button class="tbtn" id="btnFire">FIRE</button>
+  <button class="tbtn" id="btnEnter">CAR</button>
+  <button class="tbtn" id="btnInteract">E</button>
+  <button class="tbtn" id="btnSwitch">SWAP</button>
+  <button class="tbtn" id="btnRun">RUN</button>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
