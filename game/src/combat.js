@@ -42,6 +42,11 @@ function fireWeapon(state, mouseWorld) {
 }
 
 function swingMelee(state, hero) {
+  // A visible swing arc so the bat feels like it connects.
+  state.particles.push({
+    x: hero.x + Math.cos(hero.angle) * 34, y: hero.y + Math.sin(hero.angle) * 34,
+    kind: 'swing', angle: hero.angle, life: 0.18, max: 0.18,
+  });
   for (const npc of state.npcs) {
     if (npc.kind === 'police') continue;
     const d = Math.hypot(npc.x - hero.x, npc.y - hero.y);
@@ -258,13 +263,21 @@ export function drawBullets(pool, state) {
     mesh.visible = true;
   });
   // Particles: explosions grow and fade, sparks/muzzle flashes are small
-  // bright spheres. 'text' particles have no 3D equivalent and are skipped.
+  // bright spheres, a melee swing is a flat fading disc. 'text' particles
+  // have no 3D equivalent and are skipped.
   state.particles.forEach((p, i) => {
     if (p.kind === 'text') return;
     const mesh = pool.get(`particle-${i}-${p.kind}`, () => {
       if (!T) return dummyObj();
       if (p.kind === 'explosion') {
         return sphere3(T, 1, 0xf97316, { transparent: true, emissive: 0xf97316, emissiveIntensity: 0.8 });
+      }
+      if (p.kind === 'swing') {
+        const m = new T.Mesh(
+          new T.CylinderGeometry(40, 40, 2, 20, 1, false, 0, Math.PI * 0.9),
+          new T.MeshBasicMaterial({ color: 0xfef08a, transparent: true, opacity: 0.7, side: T.DoubleSide, depthWrite: false }),
+        );
+        return m;
       }
       return sphere3(T, p.kind === 'muzzle' ? 5 : 3, 0xfde047, { emissive: 0xfde047, emissiveIntensity: 0.8 });
     });
@@ -273,6 +286,11 @@ export function drawBullets(pool, state) {
       mesh.scale.set(12 + t * 46, 12 + t * 46, 12 + t * 46);
       if (mesh.material) mesh.material.opacity = Math.max(0, 1 - t);
       mesh.position.set(p.x, 10, p.y);
+    } else if (p.kind === 'swing') {
+      const t = 1 - p.life / p.max;
+      if (mesh.material) mesh.material.opacity = Math.max(0, 0.7 * (1 - t));
+      mesh.rotation.y = -(p.angle || 0) + t * 0.9;
+      mesh.position.set(p.x, 16, p.y);
     } else {
       mesh.scale.set(1, 1, 1);
       mesh.position.set(p.x, 18, p.y);
@@ -320,6 +338,13 @@ function drawBullets2D(ctx, state) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 6 + t * 22, 0, Math.PI * 2);
       ctx.fill();
+    } else if (p.kind === 'swing') {
+      const t = 1 - p.life / p.max;
+      ctx.strokeStyle = `rgba(254, 240, 138, ${1 - t})`;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 34, (p.angle || 0) - 0.8, (p.angle || 0) + 0.8);
+      ctx.stroke();
     } else if (p.kind === 'spark') {
       ctx.fillStyle = '#fde047';
       ctx.beginPath();

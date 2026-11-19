@@ -145,13 +145,24 @@ const RECIPES = {
     tone(ctx, out, { freq: 660, dur: 0.45, type: 'sine', gain: 0.45 });
     tone(ctx, out, { freq: 880, dur: 0.45, type: 'sine', gain: 0.45, delay: 0.45 });
   },
+  unlock(ctx, out) {
+    // District gate opens: a rising chime.
+    [392, 523, 659, 784].forEach((f, i) => {
+      tone(ctx, out, { freq: f, dur: 0.18, type: 'triangle', gain: 0.5, delay: i * 0.09 });
+    });
+  },
+  gate(ctx, out) {
+    // Heavy gate bar lifting: low metallic clunk.
+    tone(ctx, out, { freq: 90, freqEnd: 55, dur: 0.35, type: 'sine', gain: 0.8 });
+    noiseBurst(ctx, out, { dur: 0.2, gain: 0.4, filterFreq: 500, filterEnd: 120 });
+  },
 };
 
 /**
  * Play a synthesized sound effect by name. Unknown names and a missing
  * AudioContext are silently ignored — this function never throws.
  * Names: shoot, shotgun, explosion, hit, coin, pickup, click, mission,
- * wanted, splash, heal, denied, engine, siren.
+ * wanted, splash, heal, denied, engine, siren, unlock, gate.
  */
 export function playSfx(name) {
   playSfxAtVolume(name, 1);

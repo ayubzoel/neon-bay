@@ -15,6 +15,9 @@
 import { AIRPORT, DISTRICT_RECTS, SAFE_HOUSE, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import { ACTIVITY_SPOTS, MOUNTAIN_PEAKS, SHOP_DEFS } from './data.js';
 import { buildRoadGraph } from './roadgraph.js';
+import {
+  asphaltMat, concreteMat, facadeMat, grassMat, nightLightMat, rockMat, roofMat, sandMat, sidewalkMat, waterMat,
+} from './textures.js';
 
 // v3 street layout: 10 avenues, 9 cross streets downtown; 4 shore avenues
 // and 6 shore roads at the beach; 2 mountain roads and 4 climbs in the peaks.
@@ -56,8 +59,6 @@ function hash01(seed, index) {
   return s - Math.floor(s);
 }
 
-const GROUND_COLORS = ['#3a3f4a', '#d9b96a', '#6b7a72'];
-
 /** Build the static 3D meshes for the world data. Returns THREE.Object3D[]. */
 function buildMeshes(data) {
   const { buildings, roads, trees, gates, walls, shops, activitySpots, graph } = data;
@@ -65,10 +66,15 @@ function buildMeshes(data) {
   const geoCache = new Map();
   const matCache = new Map();
 
-  function lambert(color, opts = {}) {
-    const key = `lam-${color}-${opts.transparent ? 't' : 'o'}-${opts.opacity ?? 1}`;
+  // v3: MeshStandardMaterial everywhere (semi-realistic light response),
+  // cached by colour so the whole city shares a handful of materials.
+  function std(color, opts = {}) {
+    const key = `std-${color}-${opts.transparent ? 't' : 'o'}-${opts.opacity ?? 1}`;
     if (!matCache.has(key)) {
-      matCache.set(key, new THREE.MeshLambertMaterial({ color, transparent: !!opts.transparent, opacity: opts.opacity ?? 1 }));
+      matCache.set(key, new THREE.MeshStandardMaterial({
+        color, roughness: 0.9, metalness: 0,
+        transparent: !!opts.transparent, opacity: opts.opacity ?? 1,
+      }));
     }
     return matCache.get(key);
   }
@@ -80,35 +86,46 @@ function buildMeshes(data) {
     return matCache.get(key);
   }
   // A flat plane lying on the ground: PlaneGeometry is XY-facing, rotate -90° on X.
-  function groundPlane(w, d, material, x, z, y = 0) {
-    const key = `plane-${w}x${d}`;
-    if (!geoCache.has(key)) geoCache.set(key, new THREE.PlaneGeometry(w, d));
+  // scaleUV tiles a repeating texture (asphalt, sand, ...) once per 256 world
+  // units instead of stretching one copy across the whole plane.
+  function groundPlane(w, d, material, x, z, y = 0, scaleUV = false) {
+    const key = `plane-${w}x${d}-${scaleUV ? 'uv' : 'flat'}`;
+    if (!geoCache.has(key)) {
+      const geo = new THREE.PlaneGeometry(w, d);
+      if (scaleUV) {
+        const uv = geo.attributes.uv;
+        for (let i = 0; i < uv.count; i += 1) uv.setXY(i, uv.getX(i) * (w / 256), uv.getY(i) * (d / 256));
+      }
+      geoCache.set(key, geo);
+    }
     const m = new THREE.Mesh(geoCache.get(key), material);
     m.rotation.x = -Math.PI / 2;
     m.position.set(x, y, z);
     return m;
   }
 
-  // District ground.
+  // District ground: concrete slabs downtown, sand at the beach, grass and
+  // dirt in the peaks — each a repeating procedural texture, not flat colour.
+  const groundMats = [concreteMat(), sandMat(), grassMat()];
   for (let i = 0; i < DISTRICT_RECTS.length; i += 1) {
     const r = DISTRICT_RECTS[i];
-    meshes.push(groundPlane(r.w, r.h, lambert(GROUND_COLORS[i]), r.x + r.w / 2, r.y + r.h / 2, 0));
+    meshes.push(groundPlane(r.w, r.h, groundMats[i], r.x + r.w / 2, r.y + r.h / 2, 0, true));
   }
   // Water (slightly above ground so it never z-fights).
   for (const w of WATER_RECTS) {
-    meshes.push(groundPlane(w.w, w.h, lambert('#0e7490', { transparent: true, opacity: 0.9 }), w.x + w.w / 2, w.y + w.h / 2, 0.5));
+    meshes.push(groundPlane(w.w, w.h, waterMat(), w.x + w.w / 2, w.y + w.h / 2, 0.5));
   }
   // Sidewalks first (a pale strip wider than the road), then the road itself
   // on top, so every street reads as asphalt with a pavement on both sides.
-  const walkMat = lambert('#6b7280');
-  const roadMat = lambert('#23272f');
+  const walkMat = sidewalkMat();
+  const roadMat = asphaltMat();
   const lineMat = basic('#fde047', { transparent: true, opacity: 0.45 });
   for (const r of roads) {
-    if (r.vertical) meshes.push(groundPlane(r.w + 40, r.h, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55));
-    else meshes.push(groundPlane(r.w, r.h + 40, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55));
+    if (r.vertical) meshes.push(groundPlane(r.w + 40, r.h, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55, true));
+    else meshes.push(groundPlane(r.w, r.h + 40, walkMat, r.x + r.w / 2, r.y + r.h / 2, 0.55, true));
   }
   for (const r of roads) {
-    meshes.push(groundPlane(r.w, r.h, roadMat, r.x + r.w / 2, r.y + r.h / 2, 0.6));
+    meshes.push(groundPlane(r.w, r.h, roadMat, r.x + r.w / 2, r.y + r.h / 2, 0.6, true));
     if (r.vertical) meshes.push(groundPlane(3, r.h * 0.92, lineMat, r.x + r.w / 2, r.y + r.h / 2, 0.7));
     else meshes.push(groundPlane(r.w * 0.92, 3, lineMat, r.x + r.w / 2, r.y + r.h / 2, 0.7));
   }
@@ -133,35 +150,40 @@ function buildMeshes(data) {
     }
   }
 
-  // Shared window texture: one canvas, one texture, tinted per building
-  // by the material colour.
-  const winCanvas = document.createElement('canvas');
-  winCanvas.width = 64;
-  winCanvas.height = 128;
-  const wctx = winCanvas.getContext('2d');
-  wctx.fillStyle = '#ffffff';
-  wctx.fillRect(0, 0, 64, 128);
-  wctx.fillStyle = 'rgba(30, 41, 59, 0.55)';
-  for (let wy = 8; wy < 120; wy += 16) {
-    for (let wx = 8; wx < 56; wx += 14) wctx.fillRect(wx, wy, 9, 10);
-  }
-  const winTex = new THREE.CanvasTexture(winCanvas);
-  const buildingMats = new Map();
-  function buildingMat(color) {
-    if (!buildingMats.has(color)) {
-      buildingMats.set(color, new THREE.MeshLambertMaterial({ map: winTex, color }));
-    }
-    return buildingMats.get(color);
-  }
+  // Buildings: three procedural facade variants (brick, concrete, glass
+  // curtain), tinted per building by the material colour, with a subset of
+  // windows glowing warm at night (textures.js). One material per
+  // variant+colour, shared by every building that matches.
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
+  // Per-size geometry with UVs tiled every ~48 units, so facade windows
+  // stay square instead of stretching into stripes on wide or tall
+  // buildings. (The shared unit box would map one texture per face.)
+  const buildingGeoCache = new Map();
+  function buildingGeo(w, h, d) {
+    const key = `${w}x${h}x${d}`;
+    if (buildingGeoCache.has(key)) return buildingGeoCache.get(key);
+    const g = new THREE.BoxGeometry(w, h, d);
+    const uv = g.attributes.uv;
+    // BoxGeometry faces, 4 verts each: +x, -x, +y, -y, +z, -z.
+    const faceDims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    for (let f = 0; f < 6; f += 1) {
+      const [du, dv] = faceDims[f];
+      for (let v = 0; v < 4; v += 1) {
+        const i = f * 4 + v;
+        uv.setXY(i, uv.getX(i) * (du / 48), uv.getY(i) * (dv / 48));
+      }
+    }
+    buildingGeoCache.set(key, g);
+    return g;
+  }
   for (const b of buildings) {
     const h = b.tall ? 70 + hash01(b.x, b.y) * 50 : 26 + hash01(b.x, b.y) * 16;
-    const m = new THREE.Mesh(unitBox, buildingMat(b.color));
-    m.scale.set(b.w, h, b.h);
+    const variant = Math.floor(hash01(b.y, b.x) * 3);
+    const m = new THREE.Mesh(buildingGeo(b.w, h, b.h), facadeMat(b.color, variant));
     m.position.set(b.x + b.w / 2, h / 2, b.y + b.h / 2);
     meshes.push(m);
-    // Flat roof cap so the top is not a stretched window texture.
-    const roof = new THREE.Mesh(unitBox, lambert('#1f2937'));
+    // Flat roof cap so the top is not a stretched facade texture.
+    const roof = new THREE.Mesh(unitBox, roofMat());
     roof.scale.set(b.w + 2, 2, b.h + 2);
     roof.position.set(b.x + b.w / 2, h + 1, b.y + b.h / 2);
     meshes.push(roof);
@@ -171,10 +193,10 @@ function buildMeshes(data) {
   const trunkGeo = new THREE.CylinderGeometry(3, 4, 14, 6);
   const crownGeo = new THREE.ConeGeometry(13, 30, 7);
   const palmCrownGeo = new THREE.SphereGeometry(12, 7, 5);
-  const trunkMat = lambert('#78350f');
-  const pineMat = lambert('#166534');
-  const palmMat = lambert('#15803d');
-  const parkMat = lambert('#22c55e');
+  const trunkMat = std('#78350f');
+  const pineMat = std('#166534');
+  const palmMat = std('#15803d');
+  const parkMat = std('#22c55e');
   for (const t of trees) {
     const g = new THREE.Group();
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
@@ -189,14 +211,14 @@ function buildMeshes(data) {
 
   // Peaks: mountain cones + snow caps from MOUNTAIN_PEAKS (data.js).
   const mountainGeo = new THREE.ConeGeometry(1, 1, 7);
-  const rockMat = lambert('#6b7280');
-  const snowMat = lambert('#e2e8f0');
+  const mountainMat = rockMat();
+  const snowMat = std('#e2e8f0');
   for (const p of MOUNTAIN_PEAKS) {
     const mx = p.x;
     const mz = p.y;
     const mr = p.radius;
     const mh = p.height;
-    const m = new THREE.Mesh(mountainGeo, rockMat);
+    const m = new THREE.Mesh(mountainGeo, mountainMat);
     m.scale.set(mr, mh, mr);
     m.position.set(mx, mh / 2 - 4, mz);
     meshes.push(m);
@@ -208,16 +230,16 @@ function buildMeshes(data) {
 
   // Airport: runway + centre line + terminal + control tower.
   const rw = AIRPORT.runway;
-  meshes.push(groundPlane(rw.w, rw.h, lambert('#1f2937'), rw.x + rw.w / 2, rw.y + rw.h / 2, 0.8));
+  meshes.push(groundPlane(rw.w, rw.h, asphaltMat(), rw.x + rw.w / 2, rw.y + rw.h / 2, 0.8, true));
   meshes.push(groundPlane(rw.w * 0.9, 4, basic('#f8fafc', { transparent: true, opacity: 0.6 }), rw.x + rw.w / 2, rw.y + rw.h / 2, 0.9));
-  const terminal = new THREE.Mesh(unitBox, lambert('#94a3b8'));
+  const terminal = new THREE.Mesh(unitBox, std('#94a3b8'));
   terminal.scale.set(180, 34, 90);
   terminal.position.set(AIRPORT.x + 420, 17, AIRPORT.y + 90);
   meshes.push(terminal);
-  const tower = new THREE.Mesh(new THREE.CylinderGeometry(10, 14, 90, 8), lambert('#cbd5e1'));
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(10, 14, 90, 8), std('#cbd5e1'));
   tower.position.set(AIRPORT.x + 120, 45, AIRPORT.y + 90);
   meshes.push(tower);
-  const towerTop = new THREE.Mesh(unitBox, lambert('#38bdf8'));
+  const towerTop = new THREE.Mesh(unitBox, std('#38bdf8'));
   towerTop.scale.set(36, 18, 36);
   towerTop.position.set(AIRPORT.x + 120, 96, AIRPORT.y + 90);
   meshes.push(towerTop);
@@ -225,11 +247,11 @@ function buildMeshes(data) {
   // District barrier walls: solid concrete, always present (only the gates
   // in them ever open). Drawn as long grey slabs along each border.
   for (const w of walls) {
-    const m = new THREE.Mesh(unitBox, lambert('#52525b'));
+    const m = new THREE.Mesh(unitBox, concreteMat());
     m.scale.set(w.w, 34, w.h);
     m.position.set(w.x + w.w / 2, 17, w.y + w.h / 2);
     meshes.push(m);
-    const cap = new THREE.Mesh(unitBox, lambert('#f59e0b'));
+    const cap = new THREE.Mesh(unitBox, std('#f59e0b'));
     cap.scale.set(w.w, 3, w.h + 2);
     cap.position.set(w.x + w.w / 2, 35, w.y + w.h / 2);
     meshes.push(cap);
@@ -244,7 +266,7 @@ function buildMeshes(data) {
     const cx = g.x + g.w / 2;
     const cy = g.y + g.h / 2;
     // Barrier bar across the gap (tagged: hidden once unlocked).
-    const bar = new THREE.Mesh(unitBox, lambert('#dc2626'));
+    const bar = new THREE.Mesh(unitBox, std('#dc2626'));
     bar.scale.set(g.w, 26, g.h);
     bar.position.set(cx, 13, cy);
     bar.userData.gateDistrict = g.district;
@@ -256,7 +278,7 @@ function buildMeshes(data) {
     meshes.push(stripe);
     // Posts at both ends of the gap.
     for (const s of [-1, 1]) {
-      const post = new THREE.Mesh(unitBox, lambert('#f59e0b'));
+      const post = new THREE.Mesh(unitBox, std('#f59e0b'));
       if (vertical) {
         post.scale.set(12, 40, 12);
         post.position.set(cx, 20, cy + s * (g.h / 2 + 4));
@@ -267,12 +289,12 @@ function buildMeshes(data) {
       meshes.push(post);
     }
     // Guard booth beside the gate.
-    const booth = new THREE.Mesh(unitBox, lambert('#0ea5e9'));
+    const booth = new THREE.Mesh(unitBox, std('#0ea5e9'));
     booth.scale.set(44, 30, 44);
     if (vertical) booth.position.set(cx + 52, 15, cy + 56);
     else booth.position.set(cx + 56, 15, cy - 52);
     meshes.push(booth);
-    const boothRoof = new THREE.Mesh(unitBox, lambert('#155e75'));
+    const boothRoof = new THREE.Mesh(unitBox, std('#155e75'));
     boothRoof.scale.set(48, 4, 48);
     boothRoof.position.set(booth.position.x, 32, booth.position.z);
     meshes.push(boothRoof);
@@ -281,7 +303,7 @@ function buildMeshes(data) {
   // Shops: coloured box + a flat sign slab on top.
   const shopColors = { food: '#f59e0b', gun: '#ef4444', clothes: '#ec4899', mods: '#22d3ee' };
   for (const s of shops) {
-    const m = new THREE.Mesh(unitBox, lambert(shopColors[s.kind] || '#0ea5e9'));
+    const m = new THREE.Mesh(unitBox, std(shopColors[s.kind] || '#0ea5e9'));
     m.scale.set(s.w, 30, s.h);
     m.position.set(s.x + s.w / 2, 15, s.y + s.h / 2);
     meshes.push(m);
@@ -303,14 +325,48 @@ function buildMeshes(data) {
   }
 
   // Safe house: purple box with a lighter roof.
-  const house = new THREE.Mesh(unitBox, lambert('#7c3aed'));
+  const house = new THREE.Mesh(unitBox, std('#7c3aed'));
   house.scale.set(SAFE_HOUSE.w, 34, SAFE_HOUSE.h);
   house.position.set(SAFE_HOUSE.x + SAFE_HOUSE.w / 2, 17, SAFE_HOUSE.y + SAFE_HOUSE.h / 2);
   meshes.push(house);
-  const houseRoof = new THREE.Mesh(unitBox, lambert('#4c1d95'));
+  const houseRoof = new THREE.Mesh(unitBox, std('#4c1d95'));
   houseRoof.scale.set(SAFE_HOUSE.w + 4, 4, SAFE_HOUSE.h + 4);
   houseRoof.position.set(SAFE_HOUSE.x + SAFE_HOUSE.w / 2, 36, SAFE_HOUSE.y + SAFE_HOUSE.h / 2);
   meshes.push(houseRoof);
+
+  // Street lamps: one lamp on the sidewalk corner of every intersection.
+  // Two InstancedMeshes (poles + heads) cover the whole city in 2 draw
+  // calls; the heads glow warm at night (nightLightMat, textures.js).
+  if (graph) {
+    // Keep lamps on dry land inside the map: skip spots whose corner would
+    // land in the sea, the peaks lake, or past the world edge.
+    const lampSpots = graph.nodes.filter((n) => n.crossing
+      && n.x + 44 > 30 && n.x + 44 < 9180 && n.y + 44 > 30 && n.y + 44 < 5360
+      && !isWater(n.x + 44, n.y + 44));
+    const dummy = new THREE.Object3D();
+    const poleGeo = new THREE.CylinderGeometry(2.5, 3.5, 70, 6);
+    poleGeo.translate(0, 35, 0);
+    const poles = new THREE.InstancedMesh(poleGeo, std('#334155'), lampSpots.length);
+    const headGeo = new THREE.BoxGeometry(16, 5, 7);
+    headGeo.translate(0, 71, 0);
+    const heads = new THREE.InstancedMesh(headGeo, nightLightMat('lamp-head', 0xfde68a, 0.15, 1.8), lampSpots.length);
+    lampSpots.forEach((n, i) => {
+      // +44/+44 puts the pole on the sidewalk corner, clear of the zebra
+      // and of the building line (blocks start 56 from the centreline).
+      dummy.position.set(n.x + 44, 0, n.y + 44);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      poles.setMatrixAt(i, dummy.matrix);
+      heads.setMatrixAt(i, dummy.matrix);
+    });
+    poles.instanceMatrix.needsUpdate = true;
+    heads.instanceMatrix.needsUpdate = true;
+    poles.frustumCulled = false;
+    heads.frustumCulled = false;
+    meshes.push(poles);
+    meshes.push(heads);
+  }
 
   return meshes;
 }

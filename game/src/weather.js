@@ -54,6 +54,39 @@ const NIGHT_SKY = new THREE.Color(SKY_COLORS.night.sky);
 const RAIN_SKY = new THREE.Color(SKY_COLORS.rain.sky);
 const _sky = new THREE.Color();
 const _tmp = new THREE.Color();
+const _hemiSky = new THREE.Color();
+const _hemiGround = new THREE.Color();
+
+/** Vertical sky-gradient textures (day/dusk/night/rain), painted once. */
+function skyGradientTexture(key, stops) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 16;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  for (const [at, color] of stops) grad.addColorStop(at, color);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(canvas);
+  if ('sRGBEncoding' in THREE) tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+
+const SKY_GRADIENTS = {
+  day: null, dusk: null, night: null, rain: null,
+};
+function skyGradient(which) {
+  if (!SKY_GRADIENTS[which]) {
+    const stops = {
+      day: [[0, '#3f7fb8'], [0.45, '#87ceeb'], [0.75, '#cfe8f5'], [1, '#e8f3f8']],
+      dusk: [[0, '#3a2a4a'], [0.45, '#e8907c'], [0.75, '#f7c873'], [1, '#ffe8b0']],
+      night: [[0, '#02040a'], [0.5, '#0b1026'], [0.8, '#1a2340'], [1, '#232c4d']],
+      rain: [[0, '#3d4a55'], [0.5, '#5b6b7a'], [0.8, '#7a8a94'], [1, '#93a3ab']],
+    }[which];
+    SKY_GRADIENTS[which] = skyGradientTexture(which, stops);
+  }
+  return SKY_GRADIENTS[which];
+}
 
 /**
  * Install the 3D weather rig (sun, hemisphere light, rain) into the scene.
@@ -66,6 +99,19 @@ export function createWeather(scene) {
   scene.add(sun);
   const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x3a3f4a, 0.9);
   scene.add(hemi);
+
+  // Gradient sky dome: a big inverted sphere with a painted vertical
+  // gradient (day/dusk/night/rain), following the camera focus. One draw
+  // call, no fog on it, drawn behind everything.
+  const skyGeo = new THREE.SphereGeometry(3800, 24, 16);
+  const skyMat = new THREE.MeshBasicMaterial({
+    map: skyGradient('day'), side: THREE.BackSide, fog: false, depthWrite: false,
+  });
+  const skyDome = new THREE.Mesh(skyGeo, skyMat);
+  skyDome.frustumCulled = false;
+  skyDome.renderOrder = -1;
+  scene.add(skyDome);
+  let skyWhich = 'day';
 
   // Rain: one Points cloud in a box around the camera focus. The cloud
   // itself is repositioned to the focus each frame; drops fall and wrap.
@@ -110,6 +156,27 @@ export function createWeather(scene) {
       sun.color.setHex(0x8ea2c8);
     }
     hemi.intensity = 0.95 - darkness * 0.55;
+    // Hemisphere colours follow the same palette as the sky: warm at dusk,
+    // deep blue at night, grey in the rain.
+    const pal = (rainIntensity > 0.4) ? 'rain'
+      : darkness > 0.35 ? 'night'
+      : (hour >= 17 && hour < 20) ? 'dusk' : 'day';
+    _hemiSky.set(SKY_COLORS[pal].hemiSky);
+    _hemiGround.set(SKY_COLORS[pal].hemiGround);
+    hemi.color.lerp(_hemiSky, Math.min(1, dt * 2 + 0.05));
+    hemi.groundColor.lerp(_hemiGround, Math.min(1, dt * 2 + 0.05));
+
+    // Sky dome: swap the gradient texture when the palette changes, and
+    // keep the dome centred on the camera focus.
+    const skyPick = (rainIntensity > 0.4) ? 'rain'
+      : darkness > 0.35 ? 'night'
+      : (hour >= 17 && hour < 20 && Math.max(0, 1 - Math.abs(hour - 18.5) / 1.5) > 0.3) ? 'dusk' : 'day';
+    if (skyPick !== skyWhich) {
+      skyWhich = skyPick;
+      skyMat.map = skyGradient(skyPick);
+      skyMat.needsUpdate = true;
+    }
+    skyDome.position.set(fx, 0, fz);
 
     // Sky + fog: day blue, dusk orange, night dark, rain grey.
     _sky.copy(DAY_SKY);

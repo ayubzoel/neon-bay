@@ -20,6 +20,7 @@ import { drawMissionMarkers } from './missions.js';
 import { createWeather } from './weather.js';
 import { drawShopSigns } from './shops.js';
 import { drawActivity, hideActivityCanvas } from './activities.js';
+import { updateNightGlow } from './textures.js';
 import { WEAPONS } from './config.js';
 
 export const SCREEN_TITLE = 'title';
@@ -180,7 +181,7 @@ export function createRenderer(canvas) {
     }
     hctx.fillStyle = '#0e7490';
     for (const w of WATER_RECTS) hctx.fillRect(x0 + w.x * sx, y0 + w.y * sy, w.w * sx, w.h * sy);
-    const hero = state.characters[state.activeChar];
+    const hero = state.hero;
     const active = state.missions.active || state.missions.activeSide;
     if (active) {
       hctx.fillStyle = '#fde047';
@@ -205,7 +206,7 @@ export function createRenderer(canvas) {
   }
 
   function drawHud(state, time) {
-    const hero = state.characters[state.activeChar];
+    const hero = state.hero;
     hctx.save();
     // Money and vitals, top-left.
     hctx.fillStyle = 'rgba(10,14,22,0.8)';
@@ -274,11 +275,11 @@ export function createRenderer(canvas) {
     hctx.font = 'bold 15px system-ui, sans-serif';
     hctx.textAlign = 'center';
     hctx.fillText('NEON BAY — Downtown', x0 + 1500 * sx, y0 + 2200 * sy);
-    hctx.fillText('Sunset Beach', x0 + 3900 * sx, y0 + 2200 * sy);
+    hctx.fillText('Sunset Beach', x0 + 7800 * sx, y0 + 3300 * sy);
     hctx.fillText('Cinder Peaks', x0 + 2400 * sx, y0 + 450 * sy);
     hctx.fillStyle = '#7c3aed';
     hctx.fillRect(x0 + SAFE_HOUSE.x * sx - 5, y0 + SAFE_HOUSE.y * sy - 5, 10, 10);
-    const hero = state.characters[state.activeChar];
+    const hero = state.hero;
     hctx.fillStyle = '#fde047';
     hctx.beginPath();
     hctx.arc(x0 + hero.x * sx, y0 + hero.y * sy, 8, 0, Math.PI * 2);
@@ -345,7 +346,7 @@ export function createRenderer(canvas) {
     }
 
     // Third-person camera. Focus is the hero, or the vehicle they drive.
-    const hero = state.characters[state.activeChar];
+    const hero = state.hero;
     const focusX = state.playerVehicle ? state.playerVehicle.x : hero.x;
     const focusZ = state.playerVehicle ? state.playerVehicle.y : hero.y;
     const focusY = state.playerVehicle && state.playerVehicle.kind === 'plane' ? (state.playerVehicle.z || 0) : 0;
@@ -361,17 +362,16 @@ export function createRenderer(canvas) {
     camera.lookAt(focusX, focusY + 18, focusZ);
 
     weather.update(state, dt);
+    // Night glow: lit windows, street lamps and headlights follow the clock.
+    updateNightGlow(state);
 
     drawMissionMarkers(pool, state);
     drawShopSigns(pool, world);
     drawVehicles(pool, state, time);
     drawNpcs(pool, state, time);
     drawPolice(pool, state, time);
-    const other = state.characters[1 - state.activeChar];
     if (!state.playerVehicle) {
       drawBlobShadow('shadow-hero', hero.x, hero.y);
-      drawBlobShadow('shadow-other', other.x, other.y);
-      drawCharacter(pool, other, false, time);
       drawCharacter(pool, hero, true, time);
     }
     drawBullets(pool, state);

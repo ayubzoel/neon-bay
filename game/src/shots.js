@@ -7,7 +7,7 @@ import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { startMainMission } from './missions.js';
 
 function placeHeroInCar(state, x, y, angle) {
-  const hero = state.characters[state.activeChar];
+  const hero = state.hero;
   const car = state.vehicles.find((v) => v.owner === 'player') || state.vehicles[0];
   car.x = x;
   car.y = y;
@@ -53,12 +53,12 @@ export function stageShot(name, state, world) {
     state.money = 1250;
     state.wanted = 0;
     startMainMission(state, 0);
-    placeHeroInCar(state, 1500, 1900, 0);
+    // Heading north up avenue 1500 (angle -π/2); the camera sits behind
+    // the car (yaw π looks north) so the street runs away ahead of it.
+    placeHeroInCar(state, 1500, 1900, -Math.PI / 2);
     state.camera.x = 1500;
     state.camera.y = 1900;
-    // Behind the car: heading 0 means forward +X, and forward =
-    // (sin yaw, cos yaw), so yaw = π/2 puts the camera behind it.
-    state.camera.yaw = Math.PI / 2;
+    state.camera.yaw = Math.PI;
     state.camera.pitch = 0.45;
     state.camera.dist = 260;
     return { screen: SCREEN_PLAY };
@@ -71,19 +71,19 @@ export function stageShot(name, state, world) {
     state.money = 3400;
     state.wanted = 3;
     startMainMission(state, 4);
-    placeHeroInCar(state, 1500, 1900, 0);
-    // Police ahead of the car (east, +X) so the chase is visible in the
-    // frame — the camera sits behind the hero looking east.
+    placeHeroInCar(state, 1500, 1900, -Math.PI / 2);
+    // Police ahead of the car (north, up the avenue) so the chase is
+    // visible in the frame — the camera sits behind the hero looking north.
     placePolice(state, [
-      ['car', 1850, 1900],
-      ['car', 1750, 2030],
-      ['bike', 1950, 1820],
-      ['bike', 1700, 1780],
-      ['car', 2100, 1950],
+      ['car', 1500, 1550],
+      ['car', 1500, 1350],
+      ['bike', 1470, 1600],
+      ['bike', 1530, 1450],
+      ['car', 1500, 1700],
     ]);
     state.camera.x = 1500;
     state.camera.y = 1900;
-    state.camera.yaw = Math.PI / 2;
+    state.camera.yaw = Math.PI;
     state.camera.pitch = 0.45;
     state.camera.dist = 300;
     return { screen: SCREEN_PLAY };
@@ -96,21 +96,24 @@ export function stageShot(name, state, world) {
     state.money = 5200;
     state.wanted = 1;
     state.unlocked[1] = true;
-    const hero = state.characters[state.activeChar];
+    const hero = state.hero;
     const bike = state.vehicles.find((v) => v.kind === 'bike') || state.vehicles[0];
-    bike.x = 4200;
-    bike.y = 1800;
+    // On avenue 3900 at street 1700 (a real road), heading north (-Y).
+    bike.x = 3900;
+    bike.y = 1700;
     bike.angle = -Math.PI / 2;
     bike.speed = 0;
     state.playerVehicle = bike;
-    hero.x = 4200;
-    hero.y = 1800;
-    state.camera.x = 4200;
-    state.camera.y = 1800;
-    state.camera.yaw = Math.PI / 2;
+    hero.x = 3900;
+    hero.y = 1700;
+    state.camera.x = 3900;
+    state.camera.y = 1700;
+    // Behind the bike, looking north up the avenue: the patrol car ahead
+    // is visible up the road, under the street lamps.
+    state.camera.yaw = Math.PI;
     state.camera.pitch = 0.4;
     state.camera.dist = 320;
-    placePolice(state, [['car', 3900, 1800]]);
+    placePolice(state, [['car', 3900, 1450]]);
     state.objective = 'Side job: Deliver the package to Pier 9 before dawn.';
     return { screen: SCREEN_PLAY };
   }

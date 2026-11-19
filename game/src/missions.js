@@ -5,6 +5,7 @@ import { DISTRICT_UNLOCK_MISSION, MISSIONS_PER_DISTRICT, SIDE_QUEST_POOL } from 
 import { STORY_MISSIONS, generateSideQuest } from './data.js';
 import { activeCharacter, addMoney, addWanted, saveGame, showMessage } from './state.js';
 import { commitCrime } from './police.js';
+import { playSfx } from './audio.js';
 import { randomHeading, randomPointInDisc } from './random.js';
 
 // Seeded helpers take an rng object; gameplay spawns use Math.random.
@@ -15,6 +16,9 @@ export function buildSidePool(state, rng) {
   for (let i = 0; i < SIDE_QUEST_POOL; i += 1) {
     state.missions.sidePool.push(generateSideQuest(rng, i + 1));
   }
+  // Shuffle so the six jobs on the map are a fresh mix every new game,
+  // while the seed still fixes which mix that is.
+  if (rng && typeof rng.shuffle === 'function') rng.shuffle(state.missions.sidePool);
 }
 
 function spawnEnemies(state, x, y, count) {
@@ -91,10 +95,12 @@ function completeObjective(state, active) {
     state.stats.missionsDone += 1;
     if (active.id === DISTRICT_UNLOCK_MISSION[1]) {
       state.unlocked[1] = true;
+      playSfx('unlock');
       showMessage(state, 'Sunset Beach is open! Drive east past the gate.', 5);
     }
     if (active.id === DISTRICT_UNLOCK_MISSION[2]) {
       state.unlocked[2] = true;
+      playSfx('unlock');
       showMessage(state, 'Cinder Peaks is open! Head north past the gate.', 5);
     }
     if (active.id === 60) showMessage(state, 'You did it — Neon Bay is yours. The story is complete!', 6);

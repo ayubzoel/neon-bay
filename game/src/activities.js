@@ -7,25 +7,28 @@ import { addMoney } from './state.js';
 
 export const ACTIVITY_KINDS = ['pool', 'golf', 'race', 'swim', 'darts', 'gym'];
 
-// Race: 5 checkpoints forming a loop around the airport / downtown area.
-// The start point (2350, 2950) is also the final checkpoint — the loop closes
-// by returning to where it began.
+// Race: 5 checkpoints forming a loop on real downtown roads (v3 world):
+// west along street 2600, south down avenue 1500, east along street 4400,
+// north up avenue 3900, and back to the start — the loop closes by
+// returning to where it began. Every checkpoint sits on an intersection.
 export const RACE_CHECKPOINTS = [
-  { x: 2600, y: 3200 },
-  { x: 1500, y: 3200 },
-  { x: 900, y: 2600 },
-  { x: 1200, y: 1800 },
-  { x: 2350, y: 2950 },
+  { x: 2700, y: 2600 },
+  { x: 1500, y: 2600 },
+  { x: 1500, y: 4400 },
+  { x: 3900, y: 4400 },
+  { x: 2700, y: 2600 },
 ];
 
-// Swim: 6 buoys in the open water along the east edge (x 4400-4750, y 1000-3400).
+// Swim: 6 buoys in the open water along the far east edge (x 9300-9500,
+// y 1700-4800) — the sea east of Sunset Beach. Start at the Pier 9 Swim
+// spot on the sand (9050, 2642) and swim east into the water to reach them.
 export const SWIM_BUOYS = [
-  { x: 4450, y: 1200 },
-  { x: 4600, y: 1600 },
-  { x: 4700, y: 2100 },
-  { x: 4480, y: 2500 },
-  { x: 4650, y: 2900 },
-  { x: 4550, y: 3300 },
+  { x: 9350, y: 1700 },
+  { x: 9500, y: 2300 },
+  { x: 9330, y: 2900 },
+  { x: 9490, y: 3500 },
+  { x: 9350, y: 4200 },
+  { x: 9500, y: 4800 },
 ];
 
 const FALLBACK_VIEW = { x: 0, y: 0, w: 1280, h: 720 };
@@ -895,8 +898,7 @@ export function updateRaceChallenge(state, dt) {
     const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     race.time = (race.time || 0) + step;
 
-    const pos = state.playerVehicle
-      || (state.characters && state.characters[state.activeChar]);
+    const pos = state.playerVehicle || state.hero;
     if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
 
     const target = race.checkpoints[race.index || 0];
@@ -949,7 +951,7 @@ export function updateSwimChallenge(state, dt) {
     const step = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     ch.time = (ch.time || 0) - step;
 
-    const hero = state.characters && state.characters[state.activeChar];
+    const hero = state.hero;
     if (hero && Number.isFinite(hero.x) && Number.isFinite(hero.y) && Array.isArray(ch.buoys)) {
       for (const buoy of ch.buoys) {
         if (!buoy.taken && dist(hero.x, hero.y, buoy.x, buoy.y) < BUOY_RADIUS) {

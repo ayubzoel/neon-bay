@@ -9,6 +9,7 @@
 import { AIRPORT, VEHICLE_STATS } from './config.js';
 import { activeCharacter, showMessage } from './state.js';
 import { isWater } from './world.js';
+import { registerNightGlow } from './textures.js';
 
 const CAR_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#22c55e', '#a855f7', '#e2e8f0', '#14b8a6', '#f97316'];
 const CAR_NAMES = ['Comet', 'Stallion', 'Bison', 'Falcon', 'Dune', 'Marlin', 'Viper', 'Cruiser'];
@@ -293,7 +294,10 @@ export function updateVehicles(state, world, dt, input, rng) {
 }
 
 // ---------------------------------------------------------------------------
-// 3D drawing (v2) — pooled groups, shared geometry/materials.
+// 3D drawing (v3) — pooled groups, shared geometry/materials. Bodies use
+// MeshStandardMaterial car paint (metallic, low roughness) so they read as
+// real paint under the sun; wheels get hubcaps, headlights/taillights glow
+// at night, and every car carries a licence plate and bumpers.
 // ---------------------------------------------------------------------------
 
 const _geo = new Map();
@@ -306,16 +310,32 @@ function mat(key, make) {
   if (!_mat.has(key)) _mat.set(key, make());
   return _mat.get(key);
 }
+// Body paint per colour (standard material); bodyMats tracks them so a
+// paint job can re-tint the whole car at once.
 const bodyMat = (color) => mat(`body-${color}`, () => {
-  const m = new THREE.MeshLambertMaterial({ color });
+  const m = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.55 });
   bodyMats.add(m);
   return m;
 });
 const bodyMats = new Set();
-const glassMat = () => mat('glass', () => new THREE.MeshLambertMaterial({ color: '#0f172a' }));
-const tyreMat = () => mat('tyre', () => new THREE.MeshLambertMaterial({ color: '#111827' }));
-const whiteMat = () => mat('white', () => new THREE.MeshLambertMaterial({ color: '#f8fafc' }));
+const glassMat = () => mat('glass', () => new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.15, metalness: 0.85 }));
+const tyreMat = () => mat('tyre', () => new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.95, metalness: 0 }));
+const hubcapMat = () => mat('hubcap', () => new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.3, metalness: 0.9 }));
+const chromeMat = () => mat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.25, metalness: 0.9 }));
+const whiteMat = () => mat('white', () => new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6, metalness: 0 }));
 const smokeMat = () => mat('smoke', () => new THREE.MeshLambertMaterial({ color: '#6b7280', transparent: true, opacity: 0.8 }));
+// Headlights (warm white) and taillights (red): bright at night.
+const headlightMat = () => mat('headlight', () => {
+  const m = new THREE.MeshStandardMaterial({ color: 0xfff7cc, emissive: 0xfff2b0, emissiveIntensity: 0.25, roughness: 0.3, metalness: 0 });
+  registerNightGlow(m, 0.25, 2.2);
+  return m;
+});
+const taillightMat = () => mat('taillight', () => {
+  const m = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, emissive: 0xef4444, emissiveIntensity: 0.35, roughness: 0.3, metalness: 0 });
+  registerNightGlow(m, 0.35, 2.0);
+  return m;
+});
+const plateMat = () => mat('plate', () => new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5, metalness: 0.1 }));
 
 function unitBox() {
   return geo('unit-box', () => new THREE.BoxGeometry(1, 1, 1));
@@ -326,9 +346,20 @@ function box(w, h, d, material) {
   return m;
 }
 function wheel(r, w) {
-  const m = new THREE.Mesh(geo(`wheel-${r}-${w}`, () => new THREE.CylinderGeometry(r, r, w, 10)), tyreMat());
-  m.rotation.x = Math.PI / 2; // axle along Z (car faces +X)
-  return m;
+  // Tyre (dark cylinder, axle along Z) + a chrome hubcap disc on the
+  // outer face, so wheels read as wheels instead of black discs.
+  const g = new THREE.Group();
+  const tyre = new THREE.Mesh(geo(`wheel-${r}-${w}`, () => new THREE.CylinderGeometry(r, r, w, 12)), tyreMat());
+  tyre.rotation.x = Math.PI / 2;
+  g.add(tyre);
+  const cap = new THREE.Mesh(geo(`hubcap-${r}`, () => new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.8, 10)), hubcapMat());
+  cap.rotation.x = Math.PI / 2;
+  cap.position.z = w / 2 + 0.2;
+  g.add(cap);
+  const cap2 = cap.clone();
+  cap2.position.z = -w / 2 - 0.2;
+  g.add(cap2);
+  return g;
 }
 function blobShadow(rx, rz) {
   // Own material per shadow: opacity varies per vehicle (flying plane).
@@ -344,9 +375,31 @@ function buildCarGroup(v) {
   const body = box(46, 10, 22, bodyMat(v.color));
   body.position.y = 8;
   g.add(body);
+  // Cabin: tinted glass, slightly raked by sitting it back.
   const cabin = box(20, 8, 18, glassMat());
   cabin.position.set(-2, 16, 0);
   g.add(cabin);
+  // Chrome window trim + bumpers.
+  const trim = box(21, 1.5, 19, chromeMat());
+  trim.position.set(-2, 12.2, 0);
+  g.add(trim);
+  const bumperF = box(3, 4, 22, chromeMat());
+  bumperF.position.set(23.5, 6, 0);
+  g.add(bumperF);
+  const bumperR = box(3, 4, 22, chromeMat());
+  bumperR.position.set(-23.5, 6, 0);
+  g.add(bumperR);
+  // Headlight strip (front, +X) and taillight strip (rear, -X).
+  const head = box(1.5, 3, 18, headlightMat());
+  head.position.set(23.4, 9, 0);
+  g.add(head);
+  const tail = box(1.5, 3, 18, taillightMat());
+  tail.position.set(-23.4, 9, 0);
+  g.add(tail);
+  // Licence plate on the rear bumper.
+  const plate = box(1, 4, 10, plateMat());
+  plate.position.set(-25.2, 6, 0);
+  g.add(plate);
   const wheelPos = [[15, 11], [15, -11], [-15, 11], [-15, -11]];
   for (const [wx, wz] of wheelPos) {
     const w = wheel(5.5, 4);
@@ -370,9 +423,18 @@ function buildBikeGroup(v) {
   const frame = box(34, 5, 8, bodyMat(v.color));
   frame.position.y = 9;
   g.add(frame);
+  const tank = box(12, 5, 7, bodyMat(v.color));
+  tank.position.set(4, 13, 0);
+  g.add(tank);
   const seat = box(10, 4, 7, glassMat());
   seat.position.set(-8, 13, 0);
   g.add(seat);
+  const head = box(2, 4, 6, headlightMat());
+  head.position.set(17.5, 10, 0);
+  g.add(head);
+  const tail = box(2, 3, 6, taillightMat());
+  tail.position.set(-17.5, 10, 0);
+  g.add(tail);
   for (const wx of [13, -13]) {
     const w = wheel(7, 3);
     w.position.set(wx, 7, 0);
@@ -393,9 +455,16 @@ function buildBoatGroup(v) {
   const deck = box(20, 6, 14, whiteMat());
   deck.position.set(-4, 11, 0);
   g.add(deck);
+  // Windshield + mast + a small stern light.
+  const shield = box(8, 6, 14, glassMat());
+  shield.position.set(8, 12, 0);
+  g.add(shield);
   const mast = box(3, 22, 3, whiteMat());
   mast.position.set(4, 20, 0);
   g.add(mast);
+  const stern = box(2, 3, 4, taillightMat());
+  stern.position.set(-26.5, 8, 0);
+  g.add(stern);
   const shadow = blobShadow(32, 14);
   shadow.position.y = 0.7;
   g.add(shadow);
@@ -420,6 +489,16 @@ function buildPlaneGroup(v) {
   const nose = box(8, 7, 10, glassMat());
   nose.position.set(32, 10, 0);
   g.add(nose);
+  // Twin engines under the wings + a landing light on the nose.
+  for (const wz of [14, -14]) {
+    const eng = new THREE.Mesh(geo('engine', () => new THREE.CylinderGeometry(3.5, 3.5, 12, 8)), bodyMat(v.color));
+    eng.rotation.z = Math.PI / 2;
+    eng.position.set(2, 6, wz);
+    g.add(eng);
+  }
+  const lamp = box(2, 3, 4, headlightMat());
+  lamp.position.set(36.5, 8, 0);
+  g.add(lamp);
   for (const wz of [6, -6]) {
     const w = wheel(4, 3);
     w.position.set(8, 4, wz);

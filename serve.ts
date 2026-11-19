@@ -74,4 +74,5 @@ createServer((request, response) => {
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
   console.log(`Neon Bay 3D — open http://localhost:${port}/`);
+  console.log(`Screenshot scenes: ?shot=start | ?shot=play | ?shot=chase | ?shot=night (add &seed=N for a fixed world)`);
 });

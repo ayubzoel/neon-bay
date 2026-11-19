@@ -1,8 +1,10 @@
-// Neon Bay — on-foot movement: walking, running, swimming, jumping and the
-// companion who follows the inactive character. Collision slides along walls.
+// Neon Bay — on-foot movement: walking, running, swimming and jumping.
+// Collision slides along walls. v3: Leo Vance is the only playable
+// character — there is no companion following him any more.
 import { PLAYER_RUN_SPEED, PLAYER_SWIM_SPEED, PLAYER_WALK_SPEED, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
-import { activeCharacter, inactiveCharacter } from './state.js';
+import { activeCharacter } from './state.js';
 import { isWater } from './world.js';
+import { hairMat, pantsMat, shoeMat, skinMat, stdMat } from './textures.js';
 
 const RADIUS = 13;
 
@@ -16,10 +18,9 @@ function moveWithCollision(state, world, char, dx, dy) {
   char.y = Math.max(r, Math.min(WORLD_HEIGHT - r, char.y));
 }
 
-/** Move the active character; the inactive one follows behind. */
+/** Move the hero (Leo). */
 export function updatePlayer(state, world, dt, input) {
   const hero = activeCharacter(state);
-  const other = inactiveCharacter(state);
   // Camera-relative movement (v2): W walks away from the camera, D strafes
   // right across the screen. The camera forward on the ground plane is
   // (sin yaw, cos yaw); right is (cos yaw, -sin yaw).
@@ -54,24 +55,6 @@ export function updatePlayer(state, world, dt, input) {
 
   moveWithCollision(state, world, hero, mx * speed * dt, my * speed * dt);
 
-  // The companion trails the active character and catches up after a drive.
-  const dx = hero.x - other.x;
-  const dy = hero.y - other.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist > 700) {
-    other.x = hero.x - 40;
-    other.y = hero.y + 40;
-  } else if (dist > 46) {
-    const followSpeed = dist > 200 ? PLAYER_RUN_SPEED + 40 : PLAYER_WALK_SPEED;
-    const step = Math.min(dist - 40, followSpeed * dt);
-    moveWithCollision(state, world, other, (dx / dist) * step, (dy / dist) * step);
-    other.angle = Math.atan2(dy, dx);
-    other.moving = true;
-  } else {
-    other.moving = false;
-  }
-  other.swimming = isWater(other.x, other.y);
-
   state.camera.x = hero.x;
   state.camera.y = hero.y;
 }
@@ -104,7 +87,7 @@ export function nearestInteractable(state, world) {
   return out[0] || null;
 }
 
-// --- v2 3D drawing -------------------------------------------------------
+// --- v3 3D drawing -------------------------------------------------------
 // The first argument is the mesh pool (pool.get(id, buildFn)); while the v1
 // 2D renderer is still in place it is a canvas context instead, and the old
 // 2D figure below is used so the game stays playable either way.
@@ -130,50 +113,73 @@ function dummyObj() {
   };
 }
 
-function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
-  const m = new T.Mesh(
-    new T.BoxGeometry(w, h, d),
-    new T.MeshLambertMaterial({ color }),
-  );
+function box3(T, w, h, d, material, x = 0, y = 0, z = 0) {
+  const m = new T.Mesh(new T.BoxGeometry(w, h, d), material);
   m.position.set(x, y, z);
   return m;
 }
 
+function jacketMaterial(T, color) {
+  return stdMat(`jacket-${color}`, () => new T.MeshStandardMaterial({
+    color, roughness: 0.85, metalness: 0,
+  }));
+}
+
 /**
- * Low-poly figure, ~CHARACTER_HEIGHT tall, facing +X: legs and arms on pivot
- * groups so they can swing while walking, outfit-coloured body, skin head,
- * Leo with short dark hair, Maya with long hair down her back.
+ * Leo Vance, ~34 tall, facing +X, in realistic human proportions: shoes,
+ * legs on hip pivots, jacketed torso with a shirt front, arms on shoulder
+ * pivots with hands, a head with hair, eyes and a nose. Legs and arms swing
+ * while he walks; the outfit colour follows the wardrobe.
  */
 function buildCharacterFigure(T, char) {
   if (!T) return dummyObj();
   const g = new T.Group();
-  const skin = char.sex === 'female' ? 0xf2c89b : 0xe8b98a;
-  const pants = 0x1f2937;
-  const hairColor = char.sex === 'female' ? 0x3b1f1a : 0x1f2937;
+  const skin = skinMat();
+  const hair = hairMat();
+  const pants = pantsMat();
+  const shoes = shoeMat();
+  const jacket = jacketMaterial(T, char.outfitColor || char.color);
+  const shirt = stdMat('shirt-light', () => new T.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.9, metalness: 0 }));
+  const dark = stdMat('eye-dark', () => new T.MeshStandardMaterial({ color: 0x111827, roughness: 0.6, metalness: 0 }));
 
-  function limb(w, h, d, color, px, py, pz, ox, oy, oz) {
+  function limb(w, h, d, material, px, py, pz, ox, oy, oz) {
     const pivot = new T.Group();
     pivot.position.set(px, py, pz);
-    const mesh = box3(T, w, h, d, color, ox, oy, oz);
-    pivot.add(mesh);
+    pivot.add(box3(T, w, h, d, material, ox, oy, oz));
     g.add(pivot);
     return pivot;
   }
 
-  const legL = limb(7, 10, 6, pants, 0, 10, -4, 0, -5, 0);
-  const legR = limb(7, 10, 6, pants, 0, 10, 4, 0, -5, 0);
-  const armL = limb(5, 12, 5, char.outfitColor || char.color, 0, 23, -10.5, 0, -6, 0);
-  const armR = limb(5, 12, 5, char.outfitColor || char.color, 0, 23, 10.5, 0, -6, 0);
-  const body = box3(T, 10, 14, 16, char.outfitColor || char.color, 0, 17, 0);
-  const head = box3(T, 9, 9, 9, skin, 0, 28.5, 0);
-  const hair = box3(T, 10, 3, 10, hairColor, 0, 33.5, 0);
+  // Legs: hip pivots at y=13, shoes at the feet.
+  const legL = limb(5.5, 10, 5.5, pants, 0, 13, -3.2, 0, -5, 0);
+  const legR = limb(5.5, 10, 5.5, pants, 0, 13, 3.2, 0, -5, 0);
+  legL.add(box3(T, 6, 3, 9, shoes, 1.5, -11.5, 0));
+  legR.add(box3(T, 6, 3, 9, shoes, 1.5, -11.5, 0));
+  // Arms: shoulder pivots at y=24, hands at the ends.
+  const armL = limb(4.5, 10, 4.5, jacket, 0, 24, -9.8, 0, -5, 0);
+  const armR = limb(4.5, 10, 4.5, jacket, 0, 24, 9.8, 0, -5, 0);
+  armL.add(box3(T, 4, 3.5, 4, skin, 0, -11.5, 0));
+  armR.add(box3(T, 4, 3.5, 4, skin, 0, -11.5, 0));
+  // Torso: jacket, shirt front on the +X face, collar.
+  const body = box3(T, 9, 12, 15, jacket, 0, 19, 0);
+  const shirtFront = box3(T, 1, 9, 9, shirt, 4.6, 19, 0);
+  const collar = box3(T, 3, 2, 12, jacket, 0, 25.5, 0);
+  // Head: skin, short dark hair on top and at the back, eyes and nose.
+  const head = box3(T, 8, 8, 8, skin, 0, 29, 0);
+  const hairTop = box3(T, 8.6, 2.4, 8.6, hair, -0.3, 33.6, 0);
+  const hairBack = box3(T, 2.6, 5, 8.6, hair, -4.4, 30.5, 0);
+  const eyeL = box3(T, 0.8, 1.4, 1.4, dark, 4.1, 30, -2);
+  const eyeR = box3(T, 0.8, 1.4, 1.4, dark, 4.1, 30, 2);
+  const nose = box3(T, 1, 1.6, 1.2, skin, 4.3, 28.4, 0);
   g.add(body);
+  g.add(shirtFront);
+  g.add(collar);
   g.add(head);
-  g.add(hair);
-  if (char.sex === 'female') {
-    // Long hair down the back (-X side, behind the face).
-    g.add(box3(T, 3, 12, 10, hairColor, -5.5, 27, 0));
-  }
+  g.add(hairTop);
+  g.add(hairBack);
+  g.add(eyeL);
+  g.add(eyeR);
+  g.add(nose);
   g.userData = {
     legL, legR, armL, armR, body,
     armLMesh: armL.children[0], armRMesh: armR.children[0],
@@ -181,7 +187,7 @@ function buildCharacterFigure(T, char) {
   return g;
 }
 
-/** Draw one character as a 3D low-poly figure (v2), or 2D while on the v1 renderer. */
+/** Draw Leo as a 3D figure (v3), or 2D while on the v1 renderer. */
 export function drawCharacter(pool, char, isActive, time) {
   if (!isPool(pool)) {
     drawCharacter2D(pool, char, isActive, time);
@@ -193,25 +199,21 @@ export function drawCharacter(pool, char, isActive, time) {
   mesh.position.set(char.x, (char.swimming ? -4 : 0) + lift, char.y);
   mesh.rotation.y = -char.angle;
   mesh.visible = true;
-  const body = mesh.userData && mesh.userData.body;
-  if (body && body.material && body.material.color) {
-    try {
-      body.material.color.set(char.outfitColor || char.color);
-      for (const key of ['armLMesh', 'armRMesh']) {
-        const arm = mesh.userData[key];
-        if (arm && arm.material && arm.material.color) arm.material.color.set(char.outfitColor || char.color);
-      }
-    } catch {
-      // Invalid colour string: keep the built colour.
-    }
-  }
-  // Walk swing: legs and arms rotate about their pivots (local Z = lateral).
-  const swing = char.moving ? Math.sin(time * 10) * 0.55 : 0;
+  // Outfit changes (wardrobe / neon paint) swap the jacket material on
+  // the torso and arms to the cached material for the new colour.
   const ud = mesh.userData || {};
+  const jacket = jacketMaterial(T, char.outfitColor || char.color);
+  if (ud.body) ud.body.material = jacket;
+  if (ud.armLMesh) ud.armLMesh.material = jacket;
+  if (ud.armRMesh) ud.armRMesh.material = jacket;
+  // Walk swing: legs and arms rotate about their pivots (local Z = lateral),
+  // arms counter-swinging against the legs, plus a small step bob.
+  const swing = char.moving ? Math.sin(time * 10) * 0.55 : 0;
   if (ud.legL) ud.legL.rotation.z = swing;
   if (ud.legR) ud.legR.rotation.z = -swing;
   if (ud.armL) ud.armL.rotation.z = -swing * 0.8;
   if (ud.armR) ud.armR.rotation.z = swing * 0.8;
+  if (char.moving) mesh.position.y += Math.abs(Math.sin(time * 10)) * 1.2;
   if (isActive) {
     const ring = pool.get('char-ring', () => {
       if (!T) return dummyObj();
@@ -243,7 +245,7 @@ function drawCharacter2D(ctx, char, isActive, time) {
   ctx.beginPath();
   ctx.arc(0, 0, 12, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = char.sex === 'female' ? '#f2c89b' : '#e8b98a';
+  ctx.fillStyle = '#e8b98a';
   ctx.beginPath();
   ctx.arc(Math.cos(char.angle) * 3, Math.sin(char.angle) * 3 + bob * 0.3, 6.5, 0, Math.PI * 2);
   ctx.fill();

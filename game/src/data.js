@@ -1,12 +1,12 @@
 // Neon Bay — pure story + world data. No imports, no network, no external assets.
 // All names, places and story beats are original.
 export const STORY_MISSIONS = [
-  // ---- District 0: Downtown (ids 1-20) — Leo Vance & Maya Reyes arrive broke ----
-  { id: 1, district: 0, title: 'Bus Stop Broke', brief: 'Leo and Maya step off the night bus with two duffel bags and forty dollars between them. Reach the Neon Diner and ask Rico for work.', type: 'goto', x: 1800, y: 2558, reward: 100, enemies: 0 },
-  { id: 2, district: 0, title: 'First Shift at the Diner', brief: 'Rico hires the pair on the spot if they can handle the lunch rush. Talk to Rico behind the counter and take the job.', type: 'talk', x: 1800, y: 2558, reward: 140, enemies: 0 },
+  // ---- District 0: Downtown (ids 1-20) — Leo Vance arrives broke ----
+  { id: 1, district: 0, title: 'Bus Stop Broke', brief: 'Leo steps off the night bus with two duffel bags and forty dollars. His old friend Maya is waiting by the Neon Diner with a lead — reach the diner and ask Rico for work.', type: 'goto', x: 1800, y: 2558, reward: 100, enemies: 0 },
+  { id: 2, district: 0, title: 'First Shift at the Diner', brief: 'Rico hires Leo on the spot if he can handle the lunch rush. Talk to Rico behind the counter and take the job.', type: 'talk', x: 1800, y: 2558, reward: 140, enemies: 0 },
   { id: 3, district: 0, title: 'Noodles for Mrs. Okafor', brief: 'A regular customer ordered takeout across town and the delivery scooter is in the shop. Carry her noodles to City Park before they go cold.', type: 'deliver', x: 2742, y: 3150, reward: 160, enemies: 0 },
   { id: 4, district: 0, title: 'The Rent Man Cometh', brief: 'A landlord’s collector is leaning on Rico for back rent the diner never owed. Drive Rico’s old sedan to the corner office and settle the books in person.', type: 'drive', x: 4400, y: 2108, reward: 200, enemies: 0 },
-  { id: 5, district: 0, title: 'Vulture Feathers', brief: 'The Vulture gang has started tagging every shutter on Neon Row. Maya wants their spray cans gone — collect the stash they hid behind the arcade.', type: 'collect', x: 3400, y: 1742, reward: 220, enemies: 0 },
+  { id: 5, district: 0, title: 'Vulture Feathers', brief: 'The Vulture gang has started tagging every shutter on Neon Row. Maya tipped Leo off about their spray cans — collect the stash they hid behind the arcade.', type: 'collect', x: 3400, y: 1742, reward: 220, enemies: 0 },
   { id: 6, district: 0, title: 'A Word With Kestrel', brief: 'Kestrel, the Vultures’ loudmouth lieutenant, is drinking at the Rusty Anchor. Walk in, sit down, and make it clear the diner is off limits.', type: 'talk', x: 2000, y: 3908, reward: 260, enemies: 0 },
   { id: 7, district: 0, title: 'Chase the Tagger', brief: 'A Vulture tagger just defaced the diner’s new sign and bolted on a scooter. Run him down through the side streets before he reaches the underpass.', type: 'chase', x: 4800, y: 2642, reward: 300, enemies: 2 },
   { id: 8, district: 0, title: 'The Alley Standoff', brief: 'Three Vultures cornered a delivery driver behind the market and took his cash box. Take the box back and make sure they remember who did it.', type: 'eliminate', x: 2500, y: 4358, reward: 340, enemies: 3 },
@@ -17,23 +17,23 @@ export const STORY_MISSIONS = [
   { id: 13, district: 0, title: 'Warehouse of Feathers', brief: 'The turf map points to a Vulture stash house full of stolen electronics. Clear the guards and haul the crates out for Rico’s fence.', type: 'eliminate', x: 5142, y: 5100, reward: 580, enemies: 4 },
   { id: 14, district: 0, title: 'Smoke Over the Market', brief: 'The Vultures torched a market stall to scare the shopkeepers into paying protection. Survive the ambush they left waiting in the smoke and save the stall.', type: 'survive', x: 3000, y: 3542, reward: 640, enemies: 4 },
   { id: 15, district: 0, title: 'The Getaway Driver Audition', brief: 'A fixer called Delia needs a driver who can lose a tail in downtown traffic. Take her sedan through the checkpoint course and shake the pursuit car.', type: 'chase', x: 5400, y: 1742, reward: 700, enemies: 2 },
-  { id: 16, district: 0, title: 'Vulture Nest', brief: 'Leo and Maya have the whole Vulture roster now. Hit their clubhouse on the east edge of downtown and drive the gang out of the district for good.', type: 'eliminate', x: 5800, y: 3458, reward: 780, enemies: 4 },
+  { id: 16, district: 0, title: 'Vulture Nest', brief: 'Leo has the whole Vulture roster now. Hit their clubhouse on the east edge of downtown and drive the gang out of the district for good.', type: 'eliminate', x: 5800, y: 3458, reward: 780, enemies: 4 },
   { id: 17, district: 0, title: 'Crown of Neon Row', brief: 'With the Vultures gone, every small crew on Neon Row wants a piece of the turf. Race the circuit and plant the crew’s flag at all three checkpoints.', type: 'race', x: 2142, y: 4950, reward: 850, enemies: 0 },
   { id: 18, district: 0, title: 'Rico’s Confession', brief: 'Rico finally admits the diner’s deed is held by an airport cargo boss. Meet Rico at the diner after closing and hear the plan to steal it back.', type: 'talk', x: 1800, y: 2558, reward: 900, enemies: 0 },
   { id: 19, district: 0, title: 'Tools of the Trade', brief: 'The heist needs a runway truck, a forged manifest, and a distraction at the cargo gate. Collect the three pieces stashed around downtown before dawn.', type: 'collect', x: 3600, y: 4808, reward: 1000, enemies: 0 },
   { id: 20, district: 0, title: 'The Cargo Heist', brief: 'Everything rides on one runway run: storm the airport cargo terminal, load the deed crate onto the truck, and tear down the runway while security gives chase. Pull it off and the road to Sunset Beach opens.', type: 'drive', x: 4650, y: 4710, reward: 1200, enemies: 0 },
 
   // ---- District 1: Sunset Beach (ids 21-40) — smuggling, races, casino ----
-  { id: 21, district: 1, title: 'Salt in the Air', brief: 'Leo and Maya roll onto the boardwalk with the deed in hand and salt on the wind. Reach the Beach Shack and meet the smuggler who runs the pier.', type: 'goto', x: 7158, y: 3000, reward: 1250, enemies: 0 },
+  { id: 21, district: 1, title: 'Salt in the Air', brief: 'Leo rolls onto the boardwalk with the deed in hand and salt on the wind. Reach the Beach Shack and meet the smuggler who runs the pier.', type: 'goto', x: 7158, y: 3000, reward: 1250, enemies: 0 },
   { id: 22, district: 1, title: 'The Pier Broker', brief: 'Captain Solana moves anything that floats, for a price. Talk her into lending the crew a boat for the night run.', type: 'talk', x: 8042, y: 3300, reward: 1300, enemies: 0 },
   { id: 23, district: 1, title: 'First Night Run', brief: 'A sealed crate needs to cross the bay under cover of dark. Pilot the boat out past the pier lights and deliver it to the old lighthouse cove.', type: 'deliver', x: 8700, y: 1958, reward: 1350, enemies: 0 },
   { id: 24, district: 1, title: 'Boardwalk Sprint', brief: 'Beach racers mock the downtown crew’s cars as city toys. Settle it with a sprint down the boardwalk at sunset.', type: 'race', x: 7600, y: 2042, reward: 1400, enemies: 0 },
   { id: 25, district: 1, title: 'Tide Pool Pickups', brief: 'A tide-pool collector lost his specimen crates along the shore when the tide turned. Gather them before the waves take them out.', type: 'collect', x: 8500, y: 3958, reward: 1450, enemies: 0 },
   { id: 26, district: 1, title: 'The Lifeguard’s Favor', brief: 'The head lifeguard’s brother is in debt to the boardwalk bookies. Talk the bookies down at their stall before the debt doubles at midnight.', type: 'talk', x: 7958, y: 2700, reward: 1500, enemies: 0 },
   { id: 27, district: 1, title: 'Harbor Rats', brief: 'A rival smuggling crew is hijacking Solana’s night runs. Chase their skiff back toward the harbor and run it aground.', type: 'chase', x: 8400, y: 4958, reward: 1580, enemies: 2 },
-  { id: 28, district: 1, title: 'The Sunken Ledger', brief: 'A waterproof ledger with every harbor payoff sits in a wreck off Pier 9. Swim out, grab it, and bring it back before the harbor rats find it first.', type: 'collect', x: 8600, y: 2642, reward: 1650, enemies: 0 },
+  { id: 28, district: 1, title: 'The Sunken Ledger', brief: 'A waterproof ledger with every harbor payoff sits in a wreck off Pier 9. Swim out, grab it, and bring it back before the harbor rats find it first.', type: 'collect', x: 9350, y: 2642, reward: 1650, enemies: 0 },
   { id: 29, district: 1, title: 'Casino Courier', brief: 'A boardwalk casino host needs a velvet bag carried from the Beach Shack to the casino floor without anyone peeking inside. Deliver it and keep your mouth shut.', type: 'deliver', x: 8042, y: 1650, reward: 1720, enemies: 0 },
-  { id: 30, district: 1, title: 'High Roller Distraction', brief: 'While the crew cases the casino vault, Maya has to keep the pit boss talking at the roulette table. Hold his attention until the signal.', type: 'talk', x: 8042, y: 1650, reward: 1800, enemies: 0 },
+  { id: 30, district: 1, title: 'High Roller Distraction', brief: 'While the crew cases the casino vault, Leo has to keep the pit boss talking at the roulette table. Hold his attention until the signal.', type: 'talk', x: 8042, y: 1650, reward: 1800, enemies: 0 },
   { id: 31, district: 1, title: 'Jet Ski Ambush', brief: 'The harbor rats set a trap at the swim buoy line and opened fire on Solana’s boat. Clear them out and tow the boat back to the pier.', type: 'eliminate', x: 8758, y: 3600, reward: 1880, enemies: 3 },
   { id: 32, district: 1, title: 'The Longest Night', brief: 'Three smuggling runs in one night, each hotter than the last, with harbor patrol sweeping the bay. Survive the night and bring every crate home.', type: 'survive', x: 8200, y: 4358, reward: 1950, enemies: 4 },
   { id: 33, district: 1, title: 'Beach Guns Blazing', brief: 'A beach gang torched Solana’s storage shed to send a message. Take the fight to their stash house behind the gun shop and end the feud.', type: 'eliminate', x: 6700, y: 4042, reward: 2020, enemies: 4 },
@@ -65,7 +65,7 @@ export const STORY_MISSIONS = [
   { id: 57, district: 2, title: 'Smoke Signals', brief: 'The gang’s lookout network is strung across the ridges with signal fires. Drive the ridge road and douse every fire before the final push.', type: 'drive', x: 6600, y: 942, reward: 3000, enemies: 0 },
   { id: 58, district: 2, title: 'The Traitor’s Confession', brief: 'A gang lieutenant captured at the blockade wants to trade the lodge vault’s combination for a clean getaway. Hear him out at the old chapel.', type: 'talk', x: 1200, y: 492, reward: 3000, enemies: 0 },
   { id: 59, district: 2, title: 'The Long Climb', brief: 'One last supply run up the summit road in the dark: medicine, fuel, and the vault charges, all riding in one truck the gang will try to stop.', type: 'deliver', x: 5200, y: 408, reward: 3000, enemies: 0 },
-  { id: 60, district: 2, title: 'The Peak Lodge Score', brief: 'The mountain gang’s entire fortune sits in the vault beneath the peak lodge. Crack it, load the take, and fight your way down the summit as every gang in the peaks comes for you. Leo and Maya came to Neon Bay broke — tonight they leave as legends.', type: 'eliminate', x: 5200, y: 408, reward: 3000, enemies: 4 },
+  { id: 60, district: 2, title: 'The Peak Lodge Score', brief: 'The mountain gang’s entire fortune sits in the vault beneath the peak lodge. Crack it, load the take, and fight your way down the summit as every gang in the peaks comes for you. Leo came to Neon Bay broke — tonight he leaves as a legend.', type: 'eliminate', x: 5200, y: 408, reward: 3000, enemies: 4 },
 ];
 
 export const SIDE_QUEST_TEMPLATES = [
@@ -85,7 +85,7 @@ export const SIDE_QUEST_TEMPLATES = [
 
 export const SIDE_QUEST_PLACES = [
   { name: 'Neon Diner', x: 1800, y: 2558 },
-  { name: 'Pier 9', x: 8600, y: 2642 },
+  { name: 'Pier 9', x: 9050, y: 2642 },
   { name: 'Peak Lodge', x: 4800, y: 492 },
   { name: 'Boardwalk', x: 7600, y: 2042 },
   { name: 'Turbo Works', x: 3600, y: 4808 },
@@ -116,7 +116,7 @@ export const SIDE_QUEST_GIVERS = [
   'Nadia Petrova', 'Sam Whitaker', 'Lena Fischer', 'Carlos Mendez', 'Yuki Tanaka',
   'Vera Kovalenko', 'Andre Boateng', 'Molly O’Connor', 'Ravi Sharma', 'Elena Rossi',
   'Jack Holloway', 'Sofia Almeida', 'Ben Osei', 'Clara Dubois', 'Ivan Sokolov',
-  'Maya Chen', 'Leo Park', 'Nina Volkov', 'Owen Gallagher', 'Tara Singh',
+  'Mia Chen', 'Leo Park', 'Nina Volkov', 'Owen Gallagher', 'Tara Singh',
 ];
 
 export function generateSideQuest(rng, id) {
@@ -143,8 +143,18 @@ export const NPC_NAMES = [
   'Emre Demir', 'Sana Iqbal', 'Rory McAllister', 'Bianca Costa', 'Henrik Larsen',
 ];
 
-export const DIALOGUE_GREETINGS = [
-  'Hey, watch the traffic out there.',
+// Maya Reyes — Leo's friend by the Neon Diner. She knows the streets and
+// always has a lead; talking to her never costs anything but a minute.
+export const MAYA_LINES = [
+  'Leo! You made it off that bus. Rico’s been asking about you — go talk to him, he’s got work.',
+  'The Vultures tagged the arcade again last night. Their stash is behind it, if you’re feeling brave.',
+  'Word is the beach gate only opens for whoever pulls the airport job. That’s Rico’s plan, not mine.',
+  'I heard the casino vault job needs a driver who can keep a pit boss talking. That sounds like you.',
+  'Take care of yourself out there. This city eats people who rush in alone — and you’re alone now.',
+  'If you need cash fast, there’s always side work. Ask around — somebody always knows something.',
+];
+
+export const DIALOGUE_GREETINGS = [  'Hey, watch the traffic out there.',
   'Neon Bay never sleeps, kid.',
   'You look new around here. Stay sharp.',
   'Beautiful day, if you ignore the sirens.',
@@ -190,7 +200,7 @@ export const ACTIVITY_SPOTS = [
   { kind: 'pool', name: 'Cue Club', x: 3000, y: 2642 },
   { kind: 'golf', name: 'Sunset Greens', x: 7800, y: 4442 },
   { kind: 'race', name: 'Airport Drag Strip', x: 4700, y: 4442 },
-  { kind: 'swim', name: 'Pier 9 Swim', x: 8600, y: 2642 },
+  { kind: 'swim', name: 'Pier 9 Swim', x: 9050, y: 2642 },
   { kind: 'darts', name: 'The Rusty Anchor', x: 2000, y: 3908 },
   { kind: 'gym', name: 'Iron Paradise', x: 3258, y: 1800 },
 ];

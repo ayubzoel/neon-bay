@@ -8,11 +8,14 @@
 // the path turns onto a new street. Nobody cuts through blocks, parks or
 // buildings, and nobody wanders at random. Stationary NPCs (givers,
 // shopkeepers) never move. Fleeing pedestrians run along the sidewalks too.
-import { DIALOGUE_GREETINGS, DIALOGUE_TIPS, NPC_NAMES } from './data.js';
+import { DIALOGUE_GREETINGS, DIALOGUE_TIPS, MAYA_LINES, NPC_NAMES } from './data.js';
 import { activeCharacter, addMoney, addWanted } from './state.js';
 import { districtAt } from './world.js';
+import { hairMat, pantsMat, shoeMat, skinMat, stdMat } from './textures.js';
 
 const PED_COLORS = ['#f59e0b', '#22c55e', '#a855f7', '#14b8a6', '#f97316', '#e2e8f0', '#84cc16'];
+const SKIN_TONES = [0xe8b98a, 0xc98e5f, 0x8d5524, 0xf2c89b];
+const HAIR_COLORS = [0x1f2937, 0x3b1f1a, 0x6b7280, 0xb45309, 0x111827];
 
 function makePed(rng, x, y) {
   return {
@@ -22,6 +25,9 @@ function makePed(rng, x, y) {
     speed: 45 + rng.next() * 30,
     money: 10 + Math.floor(rng.next() * 90),
     color: rng.pick(PED_COLORS),
+    skin: rng.pick(SKIN_TONES),
+    hairColor: rng.pick(HAIR_COLORS),
+    hair: rng.chance(0.3) ? 'long' : 'short',
     state: 'walk',
     path: null, pathIdx: 0,
     waitTimer: rng.range(0, 3),
@@ -57,6 +63,13 @@ export function spawnNpcs(state, world, rng) {
   list.push({
     kind: 'giver', name: 'Rico Alvarez', x: 1740, y: 2558, angle: Math.PI / 2,
     speed: 0, money: 0, color: '#f59e0b', state: 'idle', hp: 100,
+  });
+  // Maya Reyes, Leo's old friend from the neighbourhood: no longer playable,
+  // she waits by the diner with a lead whenever Leo needs one. Talk to her.
+  list.push({
+    kind: 'friend', name: 'Maya Reyes', x: 1700, y: 2650, angle: Math.PI / 2,
+    speed: 0, money: 0, color: '#ec4899', skin: 0xf2c89b, hairColor: 0x3b1f1a,
+    hair: 'long', state: 'idle', hp: 100,
   });
   state.npcs = list;
 }
@@ -204,6 +217,7 @@ export function updateNpcs(state, world, dt, rng) {
 
 export function talkToNpc(state, npc) {
   if (npc.kind === 'giver') return null; // Mission givers open the mission dialog instead.
+  if (npc.kind === 'friend') return MAYA_LINES[Math.floor(Math.random() * MAYA_LINES.length)];
   const lines = [...DIALOGUE_GREETINGS, ...DIALOGUE_TIPS];
   return lines[Math.floor(Math.random() * lines.length)];
 }
@@ -250,34 +264,66 @@ function dummyObj() {
   };
 }
 
-function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
+function box3(T, w, h, d, material, x = 0, y = 0, z = 0) {
   const m = new T.Mesh(
     new T.BoxGeometry(w, h, d),
-    new T.MeshLambertMaterial({ color }),
+    material,
   );
   m.position.set(x, y, z);
   return m;
 }
 
-/** Low-poly pedestrian, ~29 tall, facing +X, legs swinging while walking. */
+function shirtMaterial(T, color) {
+  return stdMat(`shirt-${color}`, () => new T.MeshStandardMaterial({
+    color, roughness: 0.9, metalness: 0,
+  }));
+}
+
+/**
+ * Pedestrian, ~29 tall, facing +X, in human proportions: shoes, legs on
+ * hip pivots, arms on shoulder pivots that swing while walking, shirt,
+ * skin-toned head with hair (short, or long down the back for Maya and
+ * some passers-by). Shirt, skin and hair vary per person.
+ */
 function buildPedFigure(T, npc) {
   if (!T) return dummyObj();
   const g = new T.Group();
-  const pants = 0x1f2937;
+  const skin = skinMat(npc.skin || 0xe8b98a);
+  const hair = hairMat(npc.hairColor || 0x1f2937);
+  const pants = pantsMat();
+  const shoes = shoeMat();
+  const shirt = shirtMaterial(T, npc.color || '#e2e8f0');
   function leg(pz) {
     const pivot = new T.Group();
     pivot.position.set(0, 9, pz);
     pivot.add(box3(T, 6, 9, 5, pants, 0, -4.5, 0));
+    pivot.add(box3(T, 6, 2.5, 8, shoes, 1, -9.5, 0));
+    g.add(pivot);
+    return pivot;
+  }
+  function arm(pz) {
+    const pivot = new T.Group();
+    pivot.position.set(0, 20, pz);
+    pivot.add(box3(T, 4, 9, 4, shirt, 0, -4.5, 0));
+    pivot.add(box3(T, 3.5, 2.5, 3.5, skin, 0, -10, 0));
     g.add(pivot);
     return pivot;
   }
   const legL = leg(-3.5);
   const legR = leg(3.5);
-  const body = box3(T, 9, 12, 14, npc.color || '#e2e8f0', 0, 15, 0);
-  const head = box3(T, 8, 8, 8, 0xe8b98a, 0, 25, 0);
+  const armL = arm(-8.5);
+  const armR = arm(8.5);
+  const body = box3(T, 9, 12, 14, shirt, 0, 15, 0);
+  const head = box3(T, 8, 8, 8, skin, 0, 25, 0);
+  const hairTop = box3(T, 8.6, 2.2, 8.6, hair, -0.3, 29.4, 0);
   g.add(body);
   g.add(head);
-  g.userData = { legL, legR, body };
+  g.add(hairTop);
+  if (npc.hair === 'long') {
+    // Long hair down the back (-X side, behind the face).
+    g.add(box3(T, 2.6, 11, 8.6, hair, -4.4, 24, 0));
+  }
+  g.userData = { legL, legR, armL, armR, body, shirtMat: shirt };
   return g;
 }
 
@@ -293,17 +339,19 @@ export function drawNpcs(pool, state, time) {
     mesh.rotation.y = -npc.angle;
     mesh.visible = true;
     const ud = mesh.userData || {};
-    if (ud.body && ud.body.material && ud.body.material.color) {
-      try {
-        ud.body.material.color.set(npc.color || '#e2e8f0');
-      } catch {
-        // Keep the built colour on a bad colour string.
-      }
-    }
+    // The pool key is the NPC's index, and indices shift when an NPC is
+    // removed — so swap the shirt material to this NPC's colour instead of
+    // mutating a shared one.
+    const shirt = shirtMaterial(T, npc.color || '#e2e8f0');
+    if (ud.body) ud.body.material = shirt;
+    if (ud.armL && ud.armL.children[0]) ud.armL.children[0].material = shirt;
+    if (ud.armR && ud.armR.children[0]) ud.armR.children[0].material = shirt;
     const walking = npc.state === 'walk' || npc.state === 'flee';
     const swing = walking ? Math.sin(time * 8 + npc.x * 0.05) * 0.5 : 0;
     if (ud.legL) ud.legL.rotation.z = swing;
     if (ud.legR) ud.legR.rotation.z = -swing;
+    if (ud.armL) ud.armL.rotation.z = -swing * 0.7;
+    if (ud.armR) ud.armR.rotation.z = swing * 0.7;
     if (npc.kind === 'giver') {
       // Floating yellow octahedron "!" marker, bobbing above the giver.
       const mark = pool.get(`npc-mark-${i}`, () => {

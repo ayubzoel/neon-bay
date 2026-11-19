@@ -1,6 +1,8 @@
 // Neon Bay — keyboard, mouse and touch input. Held keys steer; one-shot
 // presses are edge-triggered so a press between frames is never lost.
-// Touch gets a virtual joystick plus FIRE / CAR / E / SWAP / RUN buttons.
+// Touch gets a virtual joystick plus FIRE / CAR / E / RUN buttons.
+// v3: no character switch — Leo Vance is the only hero, so Tab/C and the
+// SWAP button are gone.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 
@@ -19,7 +21,7 @@ export function createInput(canvas) {
   let actions = 0;
   const mouse = { x: 0, y: 0, down: false, clicked: false };
   const joy = { x: 0, y: 0, active: false };
-  const touchEdge = { enter: false, interact: false, switch: false };
+  const touchEdge = { enter: false, interact: false };
   let touchRun = false;
 
   // --- v2 camera orbit: drag on the canvas orbits, wheel zooms. A press
@@ -38,11 +40,6 @@ export function createInput(canvas) {
   }
 
   function onKeyDown(event) {
-    if (event.code === 'Tab') {
-      event.preventDefault();
-      if (!event.repeat) pressedSet.add('Tab');
-      return;
-    }
     if (MOVE_KEYS[event.code] || event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
       held.add(event.code);
       event.preventDefault();
@@ -189,7 +186,6 @@ export function createInput(canvas) {
   bindTouchButton('btnFire', () => { mouse.down = true; mouse.clicked = true; }, () => { mouse.down = false; });
   bindTouchButton('btnEnter', () => { touchEdge.enter = true; });
   bindTouchButton('btnInteract', () => { touchEdge.interact = true; });
-  bindTouchButton('btnSwitch', () => { touchEdge.switch = true; });
   bindTouchButton('btnRun', () => { touchRun = true; }, () => { touchRun = false; });
 
   return {
@@ -227,10 +223,6 @@ export function createInput(canvas) {
         touchEdge.interact = false;
         return true;
       }
-      if (code === 'Tab' && touchEdge.switch) {
-        touchEdge.switch = false;
-        return true;
-      }
       return false;
     },
     takeActions() {
@@ -261,7 +253,6 @@ export function createInput(canvas) {
       pressedSet.clear();
       touchEdge.enter = false;
       touchEdge.interact = false;
-      touchEdge.switch = false;
     },
   };
 }

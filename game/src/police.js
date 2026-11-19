@@ -4,6 +4,7 @@
 import { WANTED, WANTED_SIGHT_RANGE } from './config.js';
 import { activeCharacter, addWanted } from './state.js';
 import { playSfx3D } from './audio.js';
+import { glassMat, hubcapMat, stdMat, tyreMat } from './textures.js';
 
 // Siren throttle: at most one wail every 2.5 s, from the nearest unit.
 let sirenCd = 0;
@@ -225,25 +226,33 @@ function dummyObj() {
   };
 }
 
-function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
+function box3(T, w, h, d, material, x = 0, y = 0, z = 0) {
   const m = new T.Mesh(
     new T.BoxGeometry(w, h, d),
-    new T.MeshLambertMaterial({ color }),
+    material,
   );
   m.position.set(x, y, z);
   return m;
 }
 
-/** Build one police unit as a low-poly 3D group, facing +X. */
+function paintMat(T, color) {
+  return stdMat(`police-paint-${color.toString(16)}`, () => new T.MeshStandardMaterial({
+    color, roughness: 0.35, metalness: 0.55,
+  }));
+}
+
+/** Build one police unit as a detailed 3D group, facing +X. */
 function buildPoliceUnit(T, kind) {
   if (!T) return dummyObj();
   const g = new T.Group();
+  const dark = stdMat('police-dark', () => new T.MeshStandardMaterial({ color: 0x111827, roughness: 0.8, metalness: 0.2 }));
+  const white = stdMat('police-white', () => new T.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6, metalness: 0 }));
   if (kind === 'heli') {
-    g.add(box3(T, 40, 12, 16, 0x1e3a5f, 0, 0, 0));
-    g.add(box3(T, 26, 6, 6, 0x1e3a5f, -30, 2, 0));
-    g.add(box3(T, 10, 8, 12, 0xf8fafc, 16, 0, 0));
-    const rotor = box3(T, 72, 1.5, 4, 0x94a3b8, 0, 10, 0);
-    const tail = box3(T, 4, 1.5, 40, 0x94a3b8, 0, 10, 0);
+    g.add(box3(T, 40, 12, 16, paintMat(T, 0x1e3a5f), 0, 0, 0));
+    g.add(box3(T, 26, 6, 6, paintMat(T, 0x1e3a5f), -30, 2, 0));
+    g.add(box3(T, 10, 8, 12, glassMat(), 16, 0, 0));
+    const rotor = box3(T, 72, 1.5, 4, stdMat('police-rotor', () => new T.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.5, metalness: 0.6 })), 0, 10, 0);
+    const tail = box3(T, 4, 1.5, 40, stdMat('police-rotor', () => new T.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.5, metalness: 0.6 })), 0, 10, 0);
     const rotorGroup = new T.Group();
     rotorGroup.position.set(0, 10, 0);
     rotor.position.set(0, 0, 0);
@@ -251,23 +260,59 @@ function buildPoliceUnit(T, kind) {
     rotorGroup.add(rotor);
     rotorGroup.add(tail);
     g.add(rotorGroup);
+    // Landing skids.
+    g.add(box3(T, 30, 2, 3, dark, 0, -10, -8));
+    g.add(box3(T, 30, 2, 3, dark, 0, -10, 8));
     g.userData = { rotor: rotorGroup };
   } else if (kind === 'tank') {
-    g.add(box3(T, 48, 12, 32, 0x3f6212, 0, 6, 0));
-    g.add(box3(T, 20, 8, 20, 0x65a30d, 0, 16, 0));
-    g.add(box3(T, 32, 4, 4, 0x1a2e05, 24, 16, 0));
-    g.add(box3(T, 52, 4, 6, 0x1a2e05, 0, 2, -16));
-    g.add(box3(T, 52, 4, 6, 0x1a2e05, 0, 2, 16));
+    g.add(box3(T, 48, 12, 32, paintMat(T, 0x3f6212), 0, 6, 0));
+    g.add(box3(T, 20, 8, 20, paintMat(T, 0x65a30d), 0, 16, 0));
+    g.add(box3(T, 32, 4, 4, dark, 24, 16, 0));
+    g.add(box3(T, 52, 4, 6, dark, 0, 2, -16));
+    g.add(box3(T, 52, 4, 6, dark, 0, 2, 16));
+    // Antenna + muzzle brake on the barrel.
+    const antenna = new T.Mesh(new T.CylinderGeometry(0.8, 0.8, 22, 5), dark);
+    antenna.position.set(-8, 30, -8);
+    g.add(antenna);
+    g.add(box3(T, 6, 6, 6, dark, 40, 16, 0));
   } else if (kind === 'bike') {
-    g.add(box3(T, 34, 8, 10, 0x1e40af, 0, 6, 0));
-    g.add(box3(T, 10, 10, 8, 0xf8fafc, 4, 12, 0));
-    g.add(box3(T, 8, 8, 8, 0x111827, -12, 5, 0));
+    g.add(box3(T, 34, 8, 10, paintMat(T, 0x1e40af), 0, 6, 0));
+    g.add(box3(T, 10, 10, 8, white, 4, 12, 0));
+    g.add(box3(T, 8, 8, 8, dark, -12, 5, 0));
+    for (const wx of [13, -13]) {
+      const wheel = new T.Mesh(new T.CylinderGeometry(7, 7, 3, 10), tyreMat());
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(wx, 7, 0);
+      g.add(wheel);
+    }
+    g.add(box3(T, 2, 3, 6, stdMat('police-beacon', () => new T.MeshStandardMaterial({
+      color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.8, roughness: 0.4, metalness: 0,
+    })), 4, 20, 0));
   } else {
-    // Patrol car: black body, white doors, red/blue light bar on top.
-    g.add(box3(T, 46, 10, 22, 0x111827, 0, 5, 0));
-    g.add(box3(T, 24, 8, 20, 0xf8fafc, -2, 13, 0));
-    g.add(box3(T, 10, 4, 10, 0xef4444, -2, 19, -5));
-    g.add(box3(T, 10, 4, 10, 0x3b82f6, -2, 19, 5));
+    // Patrol car: black body, white doors, chrome bumpers, wheels with
+    // hubcaps, and a red/blue light bar that flashes (drawPolice drives it).
+    g.add(box3(T, 46, 10, 22, paintMat(T, 0x111827), 0, 5, 0));
+    g.add(box3(T, 24, 8, 20, white, -2, 13, 0));
+    g.add(box3(T, 24, 1.5, 21, stdMat('police-chrome', () => new T.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.25, metalness: 0.9 })), -2, 9.5, 0));
+    for (const [wx, wz] of [[15, 11], [15, -11], [-15, 11], [-15, -11]]) {
+      const wheel = new T.Mesh(new T.CylinderGeometry(5.5, 5.5, 4, 10), tyreMat());
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(wx, 5.5, wz);
+      g.add(wheel);
+      const cap = new T.Mesh(new T.CylinderGeometry(3, 3, 0.8, 8), hubcapMat());
+      cap.rotation.x = Math.PI / 2;
+      cap.position.set(wx, 5.5, wz + (wz > 0 ? 2.2 : -2.2));
+      g.add(cap);
+    }
+    const redMat = stdMat('police-light-red', () => new T.MeshStandardMaterial({
+      color: 0x7f1d1d, emissive: 0xef4444, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0,
+    }));
+    const blueMat = stdMat('police-light-blue', () => new T.MeshStandardMaterial({
+      color: 0x1e3a8a, emissive: 0x3b82f6, emissiveIntensity: 0.4, roughness: 0.3, metalness: 0,
+    }));
+    g.add(box3(T, 10, 4, 10, redMat, -2, 19, -5));
+    g.add(box3(T, 10, 4, 10, blueMat, -2, 19, 5));
+    g.userData = { lightRed: redMat, lightBlue: blueMat };
   }
   return g;
 }
@@ -286,6 +331,13 @@ export function drawPolice(pool, state, time) {
     mesh.visible = true;
     const rotor = mesh.userData && mesh.userData.rotor;
     if (rotor) rotor.rotation.y = time * 20;
+    // Patrol-car light bar: red and blue alternate, ~3 flashes a second.
+    const ud = mesh.userData || {};
+    if (ud.lightRed && ud.lightBlue) {
+      const redOn = Math.sin(time * 9) > 0;
+      ud.lightRed.emissiveIntensity = redOn ? 2.6 : 0.25;
+      ud.lightBlue.emissiveIntensity = redOn ? 0.25 : 2.6;
+    }
   });
 }
 

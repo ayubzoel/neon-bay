@@ -18,7 +18,7 @@ import {
 import { createRandom } from './random.js';
 import {
   SCREEN_ACTIVITY, SCREEN_DIALOG, SCREEN_INTERIOR, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_SHOP, SCREEN_TITLE,
-  activeCharacter, addWanted, advanceClock, applySaveData, createGameState, damagePlayer, decayWanted, loadSaveData, saveGame, showMessage, switchCharacter,
+  activeCharacter, addWanted, advanceClock, applySaveData, createGameState, damagePlayer, decayWanted, loadSaveData, saveGame, showMessage,
 } from './state.js';
 import { buildWorld } from './world.js';
 import { createRenderer } from './render.js';
@@ -158,7 +158,7 @@ const ui = createUI({
       id: c.id, name: c.name, price: c.price,
       desc: c.id === 'street' ? 'Everyday look' : `A fresh ${c.name.toLowerCase()} look`,
       owned: (state.ownedClothes || []).includes(c.id) || c.price === 0,
-      current: state.characters[0].outfit === c.id,
+      current: state.hero.outfit === c.id,
     }));
     ui.showWardrobe(items);
   },
@@ -316,15 +316,10 @@ function stepPlay(dt, input) {
   const ePressed = input.pressed('KeyE');
   const fPressed = input.pressed('KeyF');
   const qPressed = input.pressed('KeyQ');
-  const tabPressed = input.pressed('Tab') || input.pressed('KeyC');
   const mPressed = input.pressed('KeyM');
   const gPressed = input.pressed('KeyG');
   if (ePressed) handleInteract();
   if (fPressed) handleEnterVehicle();
-  if (tabPressed) {
-    switchCharacter(state);
-    playSfx('click');
-  }
   if (mPressed) state.showMap = !state.showMap;
   if (gPressed && state.playerVehicle) {
     const hero = activeCharacter(state);
@@ -513,7 +508,7 @@ function runGame() {
 
     if (state.message && state.message !== lastToast && state.messageTimer > 0) {
       lastToast = state.message;
-      ui.showToast(state.message);
+      ui.showToast(state.message, state.messageTimer);
     }
   }
 

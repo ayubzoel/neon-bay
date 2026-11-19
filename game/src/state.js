@@ -1,6 +1,11 @@
 // Neon Bay — the one game state object, plus clock, money, damage, wanted
 // and save/load. Every system reads and writes this object; nothing else
 // holds game progress, so saving is one JSON dump of the fields below.
+//
+// v3: one protagonist only — Leo Vance. Maya Reyes is no longer a playable
+// character (and there is no character switch): she stands by the Neon
+// Diner as Leo's friend and contact. state.hero is the single hero object;
+// activeCharacter(state) is kept as the accessor every module already uses.
 import {
   CAMERA_DIST_DEFAULT,
   CAMERA_PITCH_DEFAULT,
@@ -23,10 +28,11 @@ export const SCREEN_SHOP = 'shop';
 export const SCREEN_ACTIVITY = 'activity';
 export const SCREEN_DIALOG = 'dialog';
 
-/** Two playable characters: Leo and Maya. The inactive one follows as a companion. */
-function makeCharacter(id, name, sex, x, y, color) {
+/** The one hero: Leo Vance, alone on the streets of Neon Bay. */
+function makeHero(x, y) {
   return {
-    id, name, sex, x, y, angle: -Math.PI / 2, color, outfitColor: color,
+    id: 'leo', name: 'Leo Vance', sex: 'male', x, y, angle: -Math.PI / 2,
+    color: '#3b82f6', outfitColor: '#3b82f6',
     hp: PLAYER_MAX_HP, armor: 0, outfit: 'street',
     speed: 0, moving: false, swimming: false, stamina: 100,
   };
@@ -45,11 +51,7 @@ export function createGameState(seed) {
     season: 'summer',
     rain: 0,
     money: PLAYER_START_MONEY,
-    characters: [
-      makeCharacter('leo', 'Leo Vance', 'male', 700, 1750, '#3b82f6'),
-      makeCharacter('maya', 'Maya Reyes', 'female', 740, 1750, '#ec4899'),
-    ],
-    activeChar: 0,
+    hero: makeHero(700, 1750),
     weapons,
     weapon: 'pistol',
     wanted: 0,
@@ -82,23 +84,9 @@ export function createGameState(seed) {
   };
 }
 
+/** The hero. Kept as a function so every module reads it the same way. */
 export function activeCharacter(state) {
-  return state.characters[state.activeChar];
-}
-
-export function inactiveCharacter(state) {
-  return state.characters[1 - state.activeChar];
-}
-
-/** Switch control between Leo and Maya; the other one keeps following. */
-export function switchCharacter(state) {
-  state.activeChar = 1 - state.activeChar;
-  const now = activeCharacter(state);
-  const other = inactiveCharacter(state);
-  other.x = now.x + 30;
-  other.y = now.y + 30;
-  showMessage(state, `Now playing as ${now.name}.`);
-  return now;
+  return state.hero;
 }
 
 export function showMessage(state, text, seconds = 3) {
@@ -192,8 +180,7 @@ function serializable(state) {
     money: state.money,
     time: state.time,
     season: state.season,
-    activeChar: state.activeChar,
-    characters: state.characters.map((c) => ({ x: c.x, y: c.y, hp: c.hp, armor: c.armor, outfit: c.outfit })),
+    hero: { x: state.hero.x, y: state.hero.y, hp: state.hero.hp, armor: state.hero.armor, outfit: state.hero.outfit },
     weapons: state.weapons,
     weapon: state.weapon,
     missions: { mainIndex: state.missions.mainIndex, completedMain: state.missions.completedMain, sideDone: state.missions.sideDone },
@@ -230,11 +217,9 @@ export function applySaveData(state, data) {
   state.money = data.money ?? state.money;
   state.time = data.time ?? state.time;
   state.season = data.season ?? state.season;
-  state.activeChar = data.activeChar ?? 0;
-  (data.characters ?? []).forEach((saved, i) => {
-    if (!state.characters[i]) return;
-    Object.assign(state.characters[i], saved);
-  });
+  // v3 saves store `hero`; v2 saves stored `characters[0]` (Leo) — both load.
+  const savedHero = data.hero || (Array.isArray(data.characters) ? data.characters[0] : null);
+  if (savedHero) Object.assign(state.hero, savedHero);
   if (data.weapons) state.weapons = data.weapons;
   if (data.weapon) state.weapon = data.weapon;
   if (data.missions) {

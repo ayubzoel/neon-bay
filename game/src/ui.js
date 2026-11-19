@@ -157,7 +157,7 @@ export function createUI(handlers) {
       });
       showPanel('garagePanel');
     },
-    showToast(text) {
+    showToast(text, seconds = 3.2) {
       if (!text) {
         toast.classList.remove('show');
         return;
@@ -165,7 +165,9 @@ export function createUI(handlers) {
       toast.textContent = text;
       toast.classList.add('show');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+      // v3: the caller passes the message lifetime (mission toasts live
+      // longer than a one-line notice), so the toast never hides early.
+      toastTimer = setTimeout(() => toast.classList.remove('show'), Math.max(800, seconds * 1000));
     },
     /** v2 camera hint: shown once per session, the first time play starts. */
     showOrbitHintOnce() {

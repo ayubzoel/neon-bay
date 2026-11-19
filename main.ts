@@ -4,10 +4,14 @@
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
 // judge reads, with the vendored make.fun library. The game is Neon Bay, an original 3D
 // open-world crime game (three.js vendored at game/vendor/three.min.js, WebGL third-person
-// camera): two switchable characters, three districts (Downtown, Sunset Beach,
+// camera): one protagonist, Leo Vance (his friend Maya Reyes waits by the Neon Diner as
+// a story contact, not a second hero), three districts (Downtown, Sunset Beach,
 // Cinder Peaks), 60 story missions, 100 repeatable side quests, a five-star police force, four
 // drivable vehicle kinds, shops, a safe house, minigames and a day/night weather cycle — all
-// vanilla JS plus the vendored three.js, written for this entry.
+// vanilla JS plus the vendored three.js, written for this entry. v3 look: semi-realistic
+// MeshStandardMaterial surfaces with procedural canvas textures (asphalt, facades with
+// lit windows, sand, grass), a gradient sky dome, street lamps and headlights that glow
+// at night, and detailed cars and people — no downloaded assets, everything offline.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

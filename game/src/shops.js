@@ -4,6 +4,7 @@
 import { CAR_MODS, CLOTHES, FOODS, WEAPONS } from './config.js';
 import { WEAPON_SHOP_STOCK } from './data.js';
 import { activeCharacter, addMoney, healPlayer, saveGame, showMessage } from './state.js';
+import { registerNightGlow, stdMat } from './textures.js';
 
 export function shopItemsFor(state, kind) {
   const items = [];
@@ -22,7 +23,7 @@ export function shopItemsFor(state, kind) {
     }
   } else if (kind === 'clothes') {
     for (const c of CLOTHES) {
-      items.push({ id: c.id, name: c.name, desc: state.characters[0].outfit === c.id ? 'Currently wearing' : 'Changes your look', price: c.price, owned: state.ownedClothes?.includes(c.id) || c.price === 0 });
+      items.push({ id: c.id, name: c.name, desc: state.hero.outfit === c.id ? 'Currently wearing' : 'Changes your look', price: c.price, owned: state.ownedClothes?.includes(c.id) || c.price === 0 });
     }
   } else if (kind === 'mods') {
     for (const m of CAR_MODS) {
@@ -80,10 +81,8 @@ export function buyItem(state, kind, itemId) {
 export function selectOutfit(state, outfitId) {
   const outfit = CLOTHES.find((c) => c.id === outfitId);
   if (!outfit) return false;
-  for (const c of state.characters) {
-    c.outfit = outfitId;
-    c.outfitColor = outfit.color;
-  }
+  state.hero.outfit = outfitId;
+  state.hero.outfitColor = outfit.color;
   showMessage(state, `Now wearing: ${outfit.name}`);
   return true;
 }
@@ -169,12 +168,18 @@ export function drawShopSigns(pool, world) {
       const g = new T.Group();
       const pole = new T.Mesh(
         new T.BoxGeometry(4, 40, 4),
-        new T.MeshLambertMaterial({ color: 0x334155 }),
+        stdMat('shop-pole', () => new T.MeshStandardMaterial({ color: 0x334155, roughness: 0.8, metalness: 0.3 })),
       );
       pole.position.set(0, 20, 0);
+      // The board glows at night so shops stay findable after dark.
+      const boardMat = stdMat(`shop-board-${color.toString(16)}`, () => {
+        const m = new T.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 0.5, metalness: 0 });
+        registerNightGlow(m, 0.25, 1.4);
+        return m;
+      });
       const board = new T.Mesh(
         new T.BoxGeometry(64, 16, 4),
-        new T.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 }),
+        boardMat,
       );
       board.position.set(0, 44, 0);
       g.add(pole);
