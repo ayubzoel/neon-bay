@@ -41,9 +41,9 @@ export function setMuted(value) {
   muted = !!value;
 }
 
-function masterGain(ctx) {
+function masterGain(ctx, volumeScale = 1) {
   const g = ctx.createGain();
-  g.gain.value = 0.22;
+  g.gain.value = 0.22 * Math.max(0, Math.min(1, volumeScale));
   g.connect(ctx.destination);
   return g;
 }
@@ -154,6 +154,47 @@ const RECIPES = {
  * wanted, splash, heal, denied, engine, siren.
  */
 export function playSfx(name) {
+  playSfxAtVolume(name, 1);
+}
+
+// Where the listener (the hero) is, for 3D distance attenuation. Updated by
+// the main loop; (0, 0) until the first update means "no attenuation yet".
+let listenerX = 0;
+let listenerY = 0;
+let listenerSet = false;
+
+/** Tell the audio system where the hero is (world coords). Never throws. */
+export function setListenerPosition(x, y) {
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    listenerX = x;
+    listenerY = y;
+    listenerSet = true;
+  }
+}
+
+/**
+ * Play a sound positioned at world (x, y): full volume within ~150 units of
+ * the hero, fading to silence by ~900 units. hx/hy override the stored
+ * listener position when given. Never throws, even with no AudioContext.
+ */
+export function playSfx3D(name, x, y, hx, hy) {
+  try {
+    const lx = Number.isFinite(hx) ? hx : listenerX;
+    const ly = Number.isFinite(hy) ? hy : listenerY;
+    if (!Number.isFinite(hx) && !listenerSet) {
+      playSfxAtVolume(name, 1);
+      return;
+    }
+    const dist = Math.hypot(x - lx, y - ly);
+    const volume = Math.max(0, Math.min(1, 1 - (dist - 150) / 750));
+    if (volume <= 0.02) return;
+    playSfxAtVolume(name, volume);
+  } catch {
+    // Audio must never break gameplay.
+  }
+}
+
+function playSfxAtVolume(name, volumeScale) {
   try {
     if (muted) return;
     const recipe = RECIPES[name];
@@ -169,7 +210,7 @@ export function playSfx(name) {
       }
       if (ctx.state === 'suspended') return;
     }
-    recipe(ctx, masterGain(ctx));
+    recipe(ctx, masterGain(ctx, volumeScale));
   } catch {
     // Audio must never break gameplay.
   }

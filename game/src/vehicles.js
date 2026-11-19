@@ -1,6 +1,11 @@
 // Neon Bay — every vehicle: cars, bikes, boats and planes. All four drive:
 // cars and bikes on roads, boats on the water, planes off the airport runway.
 // Traffic cars cruise the roads on their own; any parked or NPC car can be stolen.
+//
+// v2: the update/drive/traffic/enter/exit/spawn logic is unchanged from v1.
+// Only the drawing is 3D now: drawVehicle/drawVehicles build pooled
+// THREE groups (body + cabin + wheels, hull, fuselage + wings) via the
+// renderer's mesh pool. Meshes face +X; rotation.y = -angle (v1 heading).
 import { VEHICLE_STATS } from './config.js';
 import { activeCharacter } from './state.js';
 import { isWater } from './world.js';
@@ -175,62 +180,181 @@ export function updateVehicles(state, world, dt, input, rng) {
   updateTraffic(state, world, dt, rng);
 }
 
-function drawCarShape(ctx, v, time) {
-  ctx.save();
-  ctx.translate(v.x, v.y - (v.z || 0) * 0.4);
-  ctx.rotate(v.angle);
-  const w = v.kind === 'bike' ? 34 : v.kind === 'plane' ? 64 : 46;
-  const h = v.kind === 'bike' ? 14 : v.kind === 'plane' ? 20 : 22;
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(-w / 2 + 3, -h / 2 + 4, w, h);
-  ctx.fillStyle = v.color;
-  ctx.beginPath();
-  ctx.roundRect(-w / 2, -h / 2, w, h, 6);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(15,23,42,0.85)';
-  const cabinW = w * 0.42;
-  ctx.beginPath();
-  ctx.roundRect(-cabinW / 2, -h / 2 + 3, cabinW, h - 6, 4);
-  ctx.fill();
-  if (v.kind === 'plane') {
-    ctx.fillStyle = v.color;
-    ctx.fillRect(-6, -h / 2 - 16, 12, 8);
-    ctx.fillRect(-6, h / 2 + 8, 12, 8);
-    ctx.fillRect(w / 2 - 4, -3, 12, 6);
+// ---------------------------------------------------------------------------
+// 3D drawing (v2) — pooled groups, shared geometry/materials.
+// ---------------------------------------------------------------------------
+
+const _geo = new Map();
+function geo(key, make) {
+  if (!_geo.has(key)) _geo.set(key, make());
+  return _geo.get(key);
+}
+const _mat = new Map();
+function mat(key, make) {
+  if (!_mat.has(key)) _mat.set(key, make());
+  return _mat.get(key);
+}
+const bodyMat = (color) => mat(`body-${color}`, () => {
+  const m = new THREE.MeshLambertMaterial({ color });
+  bodyMats.add(m);
+  return m;
+});
+const bodyMats = new Set();
+const glassMat = () => mat('glass', () => new THREE.MeshLambertMaterial({ color: '#0f172a' }));
+const tyreMat = () => mat('tyre', () => new THREE.MeshLambertMaterial({ color: '#111827' }));
+const whiteMat = () => mat('white', () => new THREE.MeshLambertMaterial({ color: '#f8fafc' }));
+const smokeMat = () => mat('smoke', () => new THREE.MeshLambertMaterial({ color: '#6b7280', transparent: true, opacity: 0.8 }));
+
+function unitBox() {
+  return geo('unit-box', () => new THREE.BoxGeometry(1, 1, 1));
+}
+function box(w, h, d, material) {
+  const m = new THREE.Mesh(unitBox(), material);
+  m.scale.set(w, h, d);
+  return m;
+}
+function wheel(r, w) {
+  const m = new THREE.Mesh(geo(`wheel-${r}-${w}`, () => new THREE.CylinderGeometry(r, r, w, 10)), tyreMat());
+  m.rotation.x = Math.PI / 2; // axle along Z (car faces +X)
+  return m;
+}
+function blobShadow(rx, rz) {
+  // Own material per shadow: opacity varies per vehicle (flying plane).
+  const m = new THREE.Mesh(geo('blob-circle', () => new THREE.CircleGeometry(1, 20)),
+    new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.28, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.scale.set(rx, rz, 1);
+  return m;
+}
+
+function buildCarGroup(v) {
+  const g = new THREE.Group();
+  const body = box(46, 10, 22, bodyMat(v.color));
+  body.position.y = 8;
+  g.add(body);
+  const cabin = box(20, 8, 18, glassMat());
+  cabin.position.set(-2, 16, 0);
+  g.add(cabin);
+  const wheelPos = [[15, 11], [15, -11], [-15, 11], [-15, -11]];
+  for (const [wx, wz] of wheelPos) {
+    const w = wheel(5.5, 4);
+    w.position.set(wx, 5.5, wz);
+    g.add(w);
   }
-  if (v.kind === 'boat') {
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(-w / 2 + 6, -4, 12, 8);
+  const shadow = blobShadow(30, 16);
+  shadow.position.y = 0.7;
+  g.add(shadow);
+  g.userData.shadow = shadow;
+  const smoke = new THREE.Mesh(geo('smoke-ball', () => new THREE.SphereGeometry(7, 8, 6)), smokeMat());
+  smoke.position.set(-14, 16, 0);
+  smoke.visible = false;
+  g.add(smoke);
+  g.userData.smoke = smoke;
+  return g;
+}
+
+function buildBikeGroup(v) {
+  const g = new THREE.Group();
+  const frame = box(34, 5, 8, bodyMat(v.color));
+  frame.position.y = 9;
+  g.add(frame);
+  const seat = box(10, 4, 7, glassMat());
+  seat.position.set(-8, 13, 0);
+  g.add(seat);
+  for (const wx of [13, -13]) {
+    const w = wheel(7, 3);
+    w.position.set(wx, 7, 0);
+    g.add(w);
   }
-  if (time % 1 < 0.5 && v.hp < v.maxHp * 0.4) {
-    ctx.fillStyle = '#6b7280';
-    ctx.beginPath();
-    ctx.arc(-w / 4, -h / 2, 6, 0, Math.PI * 2);
-    ctx.fill();
+  const shadow = blobShadow(22, 10);
+  shadow.position.y = 0.7;
+  g.add(shadow);
+  g.userData.shadow = shadow;
+  return g;
+}
+
+function buildBoatGroup(v) {
+  const g = new THREE.Group();
+  const hull = box(52, 9, 20, bodyMat(v.color));
+  hull.position.y = 4;
+  g.add(hull);
+  const deck = box(20, 6, 14, whiteMat());
+  deck.position.set(-4, 11, 0);
+  g.add(deck);
+  const mast = box(3, 22, 3, whiteMat());
+  mast.position.set(4, 20, 0);
+  g.add(mast);
+  const shadow = blobShadow(32, 14);
+  shadow.position.y = 0.7;
+  g.add(shadow);
+  g.userData.shadow = shadow;
+  return g;
+}
+
+function buildPlaneGroup(v) {
+  const g = new THREE.Group();
+  const fuselage = box(64, 9, 12, bodyMat(v.color));
+  fuselage.position.y = 10;
+  g.add(fuselage);
+  const wing = box(16, 2, 52, bodyMat(v.color));
+  wing.position.set(2, 10, 0);
+  g.add(wing);
+  const tailWing = box(10, 2, 24, bodyMat(v.color));
+  tailWing.position.set(-28, 11, 0);
+  g.add(tailWing);
+  const tailFin = box(10, 14, 2, bodyMat(v.color));
+  tailFin.position.set(-28, 18, 0);
+  g.add(tailFin);
+  const nose = box(8, 7, 10, glassMat());
+  nose.position.set(32, 10, 0);
+  g.add(nose);
+  for (const wz of [6, -6]) {
+    const w = wheel(4, 3);
+    w.position.set(8, 4, wz);
+    g.add(w);
   }
-  ctx.restore();
-  if (v.z > 0) {
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.beginPath();
-    ctx.ellipse(v.x, v.y + 10, 26, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
+  const shadow = blobShadow(38, 28);
+  shadow.position.y = 0.7;
+  g.add(shadow);
+  g.userData.shadow = shadow;
+  return g;
+}
+
+const BUILDERS = { car: buildCarGroup, bike: buildBikeGroup, boat: buildBoatGroup, plane: buildPlaneGroup };
+
+/** Draw one vehicle in 3D through the pool. */
+export function drawVehicle(pool, v, time) {
+  if (!v || v.hp <= 0) return;
+  const g = pool.get(`veh-${v.id}`, () => (BUILDERS[v.kind] || buildCarGroup)(v));
+  const flyZ = v.kind === 'plane' ? (v.z || 0) : 0;
+  g.position.set(v.x, flyZ, v.y);
+  g.rotation.y = -v.angle;
+  // Body colour can change (neon paint job): re-tint every body part.
+  if (g.userData.color !== v.color) {
+    g.userData.color = v.color;
+    g.traverse((o) => {
+      if (o.isMesh && bodyMats.has(o.material)) o.material = bodyMat(v.color);
+    });
+  }
+  // Blob shadow stays on the ground while a plane flies.
+  if (g.userData.shadow) {
+    const s = g.userData.shadow;
+    if (!g.userData.shadowBase) g.userData.shadowBase = [s.scale.x, s.scale.y];
+    const base = g.userData.shadowBase;
+    s.position.y = 0.7 - flyZ;
+    const shrink = Math.max(0.35, 1 - flyZ / 900);
+    s.scale.set(base[0] * shrink, base[1] * shrink, 1);
+    s.material.opacity = 0.28 * shrink;
+  }
+  if (g.userData.smoke) {
+    g.userData.smoke.visible = v.hp < v.maxHp * 0.4 && (time % 1) < 0.5;
   }
 }
 
-export function drawVehicle(ctx, v, time) {
-  drawCarShape(ctx, v, time);
-  if (v.owner === 'player') {
-    ctx.fillStyle = '#fde68a';
-    ctx.font = 'bold 11px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(v.name, v.x, v.y - 26 - (v.z || 0) * 0.4);
-  }
-}
-
-export function drawVehicles(ctx, state, time) {
+export function drawVehicles(pool, state, time) {
   for (const v of state.vehicles) {
     if (state.playerVehicle === v) continue;
-    drawVehicle(ctx, v, time);
+    drawVehicle(pool, v, time);
   }
-  if (state.playerVehicle) drawVehicle(ctx, state.playerVehicle, time);
+  if (state.playerVehicle) drawVehicle(pool, state.playerVehicle, time);
 }

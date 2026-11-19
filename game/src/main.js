@@ -6,7 +6,15 @@
 // ?seed=N fixes the world. ?shot=start|play|chase|night (with &seed=N)
 // stages that scene instead of running the loop, paints it twice and sets
 // window.__shotReady for a screenshot.
-import { STEP, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+import {
+  CAMERA_MAX_DIST,
+  CAMERA_MIN_DIST,
+  CAMERA_PITCH_MAX,
+  CAMERA_PITCH_MIN,
+  STEP,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from './config.js';
 import { createRandom } from './random.js';
 import {
   SCREEN_ACTIVITY, SCREEN_DIALOG, SCREEN_INTERIOR, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_SHOP, SCREEN_TITLE,
@@ -23,12 +31,17 @@ import { updatePolice } from './police.js';
 import { buildSidePool, nextMainMission, startMainMission, startSideQuest, updateEnemies, updateMissions, updatePickups } from './missions.js';
 import { updateBullets, updateCombat } from './combat.js';
 import { buyItem, selectOutfit, shopItemsFor, sleepAtSafeHouse, storeCurrentCar, takeOutCar } from './shops.js';
-import { startActivity, startRaceChallenge, startSwimChallenge, updateActivity, updateRaceChallenge, updateSwimChallenge } from './activities.js';
-import { initAudio, playSfx } from './audio.js';
+import { hideActivityCanvas, startActivity, startRaceChallenge, startSwimChallenge, updateActivity, updateRaceChallenge, updateSwimChallenge } from './activities.js';
+import { initAudio, playSfx, setListenerPosition } from './audio.js';
 import { stageShot } from './shots.js';
 import { CLOTHES } from './config.js';
 
 const MAX_FRAME = 0.25;
+
+// Frames-per-second counter, exposed as window.__neonBay.fps for testers.
+let fpsValue = 0;
+let fpsFrames = 0;
+let fpsWindowStart = 0;
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
@@ -60,6 +73,10 @@ function buildEntities() {
 }
 
 function mouseWorld(input) {
+  // v2: raycast from the 3D camera through the mouse point to the ground plane.
+  if (renderer && typeof renderer.screenToGround === 'function') {
+    return renderer.screenToGround(input.mouse.x, input.mouse.y);
+  }
   const view = renderer.view;
   const vw = view.w / view.scale;
   const vh = view.h / view.scale;
@@ -364,7 +381,11 @@ function runShot(name) {
     renderer.draw(state, world, scene.screen, 4.2);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
+    else {
+      // Both flags: the kit checks window.shotReady, older code used __shotReady.
+      window.__shotReady = true;
+      window.shotReady = true;
+    }
   }
   requestAnimationFrame(paint);
 }
@@ -383,6 +404,32 @@ function runGame() {
     requestAnimationFrame(frame);
     const elapsed = Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
+    // Frames per second for automated testing (window.__neonBay.fps).
+    fpsFrames += 1;
+    if (fpsWindowStart === 0) fpsWindowStart = now;
+    else if (now - fpsWindowStart >= 1000) {
+      fpsValue = Math.round((fpsFrames * 1000) / (now - fpsWindowStart));
+      fpsFrames = 0;
+      fpsWindowStart = now;
+    }
+    // v2 camera orbit: drag orbits, wheel zooms (drag up raises the camera).
+    const orbit = input.takeOrbit();
+    if (orbit.dx !== 0 || orbit.dy !== 0 || orbit.wheel !== 0) {
+      state.camera.yaw -= orbit.dx * 0.005;
+      state.camera.pitch = Math.max(
+        CAMERA_PITCH_MIN,
+        Math.min(CAMERA_PITCH_MAX, state.camera.pitch - orbit.dy * 0.003),
+      );
+      state.camera.dist = Math.max(
+        CAMERA_MIN_DIST,
+        Math.min(CAMERA_MAX_DIST, state.camera.dist * (1 + orbit.wheel * 0.001)),
+      );
+    }
+    // Positional audio follows the hero; the minigame overlay hides off-activity.
+    const heroNow = activeCharacter(state);
+    setListenerPosition(heroNow.x, heroNow.y);
+    if (state.screen !== SCREEN_ACTIVITY) hideActivityCanvas();
+    if (state.screen === SCREEN_PLAY) ui.showOrbitHintOnce();
     const actions = input.takeActions();
     if (actions & ACTION_CONFIRM) {
       if (state.screen === SCREEN_TITLE) {
@@ -467,7 +514,7 @@ function runGame() {
 }
 
 // Debug hook for automated play-testing (read-only from the page's own tests).
-window.__neonBay = { get state() { return state; }, world, seed };
+window.__neonBay = { get state() { return state; }, get fps() { return fpsValue; }, world, seed };
 
 if (shot) runShot(shot);
 else runGame();

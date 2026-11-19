@@ -5,6 +5,10 @@ import { DISTRICT_UNLOCK_MISSION, MISSIONS_PER_DISTRICT, SIDE_QUEST_POOL } from 
 import { STORY_MISSIONS, generateSideQuest } from './data.js';
 import { activeCharacter, addMoney, addWanted, saveGame, showMessage } from './state.js';
 import { commitCrime } from './police.js';
+import { randomHeading, randomPointInDisc } from './random.js';
+
+// Seeded helpers take an rng object; gameplay spawns use Math.random.
+const MATH_RNG = { next: () => Math.random() };
 
 export function buildSidePool(state, rng) {
   state.missions.sidePool = [];
@@ -15,12 +19,13 @@ export function buildSidePool(state, rng) {
 
 function spawnEnemies(state, x, y, count) {
   for (let i = 0; i < count; i += 1) {
+    const p = randomPointInDisc(MATH_RNG, x, y, 80);
     state.npcs.push({
       kind: 'enemy',
       name: 'Vulture',
-      x: x + (Math.random() - 0.5) * 160,
-      y: y + (Math.random() - 0.5) * 160,
-      angle: 0, speed: 110, money: 30, color: '#7f1d1d',
+      x: p.x,
+      y: p.y,
+      angle: randomHeading(MATH_RNG), speed: 110, money: 30, color: '#7f1d1d',
       state: 'hunt', hp: 50, maxHp: 50, shootCd: 1 + Math.random(),
     });
   }
@@ -28,13 +33,14 @@ function spawnEnemies(state, x, y, count) {
 
 function spawnPickups(state, x, y, count) {
   for (let i = 0; i < count; i += 1) {
-    state.pickups.push({ kind: 'package', x: x + (Math.random() - 0.5) * 220, y: y + (Math.random() - 0.5) * 220, taken: false });
+    const p = randomPointInDisc(MATH_RNG, x, y, 110);
+    state.pickups.push({ kind: 'package', x: p.x, y: p.y, taken: false });
   }
 }
 
 function spawnChaseTarget(state, x, y) {
   const v = {
-    id: 9000 + Math.floor(Math.random() * 900), kind: 'car', x, y, angle: 0, speed: 0, z: 0,
+    id: 9000 + Math.floor(Math.random() * 900), kind: 'car', x, y, angle: randomHeading(MATH_RNG), speed: 0, z: 0,
     hp: 90, maxHp: 90, color: '#111827', name: 'Getaway Car', owner: 'target',
     modSpeed: 0, modArmor: 0, waypoint: null, waitTimer: 0,
   };
@@ -229,7 +235,76 @@ export function missionsRemainingInDistrict(state, district) {
   return STORY_MISSIONS.slice(start, start + MISSIONS_PER_DISTRICT).filter((m) => !state.missions.completedMain.includes(m.id)).length;
 }
 
-export function drawMissionMarkers(ctx, state) {
+// --- v2 3D drawing -------------------------------------------------------
+// First argument is the mesh pool; a canvas context falls back to the v1 2D
+// drawing so the game stays playable until the 3D renderer lands.
+// The renderer calls drawMissionMarkers(pool, state) with no time argument,
+// so the bob/pulse animation reads the clock directly.
+function isPool(arg) {
+  return !!arg && typeof arg.get === 'function';
+}
+
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+export function drawMissionMarkers(pool, state) {
+  if (!isPool(pool)) {
+    drawMissionMarkers2D(pool, state);
+    return;
+  }
+  const T = three();
+  const time = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+  const active = state.missions.active || state.missions.activeSide;
+  if (active) {
+    const pulse = 1 + Math.sin(time * 3.3) * 0.15;
+    const disc = pool.get('marker-main', () => {
+      if (!T) return dummyObj();
+      return new T.Mesh(
+        new T.CylinderGeometry(26, 26, 4, 24),
+        new T.MeshLambertMaterial({ color: 0xfde047, transparent: true, opacity: 0.35, emissive: 0xfde047, emissiveIntensity: 0.3 }),
+      );
+    });
+    disc.scale.set(pulse, 1, pulse);
+    disc.position.set(active.x, 2, active.y);
+    disc.visible = true;
+    const arrow = pool.get('marker-arrow', () => {
+      if (!T) return dummyObj();
+      return new T.Mesh(
+        new T.ConeGeometry(10, 20, 10),
+        new T.MeshLambertMaterial({ color: 0xfde047, emissive: 0xfde047, emissiveIntensity: 0.5 }),
+      );
+    });
+    arrow.position.set(active.x, 48 + Math.sin(time * 4) * 4, active.y);
+    arrow.visible = true;
+  }
+  // Side-job markers: the next few jobs in the pool, small floating octahedra.
+  state.missions.sidePool.slice(0, 6).forEach((q, i) => {
+    const mark = pool.get(`marker-side-${i}`, () => {
+      if (!T) return dummyObj();
+      return new T.Mesh(
+        new T.OctahedronGeometry(9),
+        new T.MeshLambertMaterial({ color: 0xfbbf24, emissive: 0xfbbf24, emissiveIntensity: 0.4 }),
+      );
+    });
+    mark.position.set(q.x, 30 + Math.sin(time * 3 + i * 1.3) * 4, q.y);
+    mark.rotation.y = time * 2 + i;
+    mark.visible = true;
+  });
+}
+
+function drawMissionMarkers2D(ctx, state) {
   const active = state.missions.active || state.missions.activeSide;
   if (active) {
     const pulse = 1 + Math.sin(performance.now() / 300) * 0.15;

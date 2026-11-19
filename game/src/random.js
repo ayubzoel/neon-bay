@@ -24,3 +24,15 @@ export function createRandom(seed) {
     },
   };
 }
+
+/** A uniformly random point inside a disc of radius r around (cx, cy). */
+export function randomPointInDisc(rng, cx, cy, r) {
+  const angle = rng.next() * Math.PI * 2;
+  const dist = r * Math.sqrt(rng.next());
+  return { x: cx + Math.cos(angle) * dist, y: cy + Math.sin(angle) * dist };
+}
+
+/** A uniformly random heading in radians, 0..2π. */
+export function randomHeading(rng) {
+  return rng.next() * Math.PI * 2;
+}

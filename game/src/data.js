@@ -196,3 +196,25 @@ export const ACTIVITY_SPOTS = [
 ];
 
 export const WEAPON_SHOP_STOCK = ['rifle', 'shotgun', 'melee', 'grenade', 'bazooka'];
+
+// Sky + lighting palettes for the 3D renderer (weather.js picks one by
+// time of day and rain). Hex strings so both THREE colours and CSS can use them.
+export const SKY_COLORS = {
+  day: { sky: '#87ceeb', fog: '#bcd8e8', horizon: '#cfe8f5', sun: '#fff3b0', ambient: '#ffffff', hemiSky: '#bcd8ff', hemiGround: '#4a5240' },
+  dusk: { sky: '#e8907c', fog: '#d9a08c', horizon: '#f7c873', sun: '#ff9a3d', ambient: '#ffb38a', hemiSky: '#e8a87c', hemiGround: '#3a3230' },
+  night: { sky: '#0b1026', fog: '#131a33', horizon: '#1a2340', sun: '#e2e8f0', ambient: '#8fa3c7', hemiSky: '#25304f', hemiGround: '#0c0f16' },
+  rain: { sky: '#5b6b7a', fog: '#6b7a80', horizon: '#8a9aa0', sun: '#cfd8dc', ambient: '#b0bec5', hemiSky: '#7a8a94', hemiGround: '#2e3438' },
+};
+
+// Mountain peaks of Cinder Peaks (district 2, y < 900) for the 3D terrain
+// (world.js): x/y are world coords, height is the peak height in world
+// units, radius the base radius. Kept clear of the lake (x 3300-4000, y 60-380).
+export const MOUNTAIN_PEAKS = [
+  { x: 600, y: 250, height: 260, radius: 320 },
+  { x: 1500, y: 120, height: 330, radius: 380 },
+  { x: 2600, y: 90, height: 390, radius: 420 },
+  { x: 3400, y: 650, height: 300, radius: 340 },
+  { x: 4300, y: 180, height: 350, radius: 360 },
+  { x: 2200, y: 560, height: 220, radius: 300 },
+  { x: 900, y: 700, height: 200, radius: 280 },
+];

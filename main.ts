@@ -1,12 +1,13 @@
 // Neon Bay — a working gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
+// modules, no network request), and the program hands it in. It copies game/ and
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. The game is Neon Bay, an original 2D top-down
-// open-world crime game: two switchable characters, three districts (Downtown, Sunset Beach,
+// judge reads, with the vendored make.fun library. The game is Neon Bay, an original 3D
+// open-world crime game (three.js vendored at game/vendor/three.min.js, WebGL third-person
+// camera): two switchable characters, three districts (Downtown, Sunset Beach,
 // Cinder Peaks), 60 story missions, 100 repeatable side quests, a five-star police force, four
 // drivable vehicle kinds, shops, a safe house, minigames and a day/night weather cycle — all
-// vanilla JS canvas, written for this entry.
+// vanilla JS plus the vendored three.js, written for this entry.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -23,6 +24,11 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 // Neon Bay's entrypoint check: the game must open at game/index.html, or there is nothing to hand in.
 if (!existsSync(join(here, 'game', 'index.html'))) {
   throw new Error('Neon Bay is missing game/index.html');
+}
+
+// The 3D renderer needs the vendored three.js — without it the game cannot start.
+if (!existsSync(join(here, 'game', 'vendor', 'three.min.js'))) {
+  throw new Error('Neon Bay 3D is missing game/vendor/three.min.js (vendored three.js)');
 }
 
 mkdirSync(out, { recursive: true });

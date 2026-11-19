@@ -20,8 +20,18 @@ function moveWithCollision(state, world, char, dx, dy) {
 export function updatePlayer(state, world, dt, input) {
   const hero = activeCharacter(state);
   const other = inactiveCharacter(state);
-  let mx = input.moveX();
-  let my = input.moveY();
+  // Camera-relative movement (v2): W walks away from the camera, D strafes
+  // right across the screen. The camera forward on the ground plane is
+  // (sin yaw, cos yaw); right is (cos yaw, -sin yaw).
+  const yaw = (state.camera && state.camera.yaw) || 0;
+  const fwd = -input.moveY();
+  const str = input.moveX();
+  const fx = Math.sin(yaw);
+  const fy = Math.cos(yaw);
+  const rx = Math.cos(yaw);
+  const ry = -Math.sin(yaw);
+  let mx = fx * fwd + rx * str;
+  let my = fy * fwd + ry * str;
   const len = Math.hypot(mx, my);
   if (len > 1) {
     mx /= len;
@@ -94,8 +104,131 @@ export function nearestInteractable(state, world) {
   return out[0] || null;
 }
 
+// --- v2 3D drawing -------------------------------------------------------
+// The first argument is the mesh pool (pool.get(id, buildFn)); while the v1
+// 2D renderer is still in place it is a canvas context instead, and the old
+// 2D figure below is used so the game stays playable either way.
+
+function isPool(arg) {
+  return !!arg && typeof arg.get === 'function';
+}
+
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+// Stand-in for a THREE object when three.js is not loaded (unit tests):
+// accepts position/rotation/scale writes and never throws.
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new T.Mesh(
+    new T.BoxGeometry(w, h, d),
+    new T.MeshLambertMaterial({ color }),
+  );
+  m.position.set(x, y, z);
+  return m;
+}
+
+/**
+ * Low-poly figure, ~CHARACTER_HEIGHT tall, facing +X: legs and arms on pivot
+ * groups so they can swing while walking, outfit-coloured body, skin head,
+ * Leo with short dark hair, Maya with long hair down her back.
+ */
+function buildCharacterFigure(T, char) {
+  if (!T) return dummyObj();
+  const g = new T.Group();
+  const skin = char.sex === 'female' ? 0xf2c89b : 0xe8b98a;
+  const pants = 0x1f2937;
+  const hairColor = char.sex === 'female' ? 0x3b1f1a : 0x1f2937;
+
+  function limb(w, h, d, color, px, py, pz, ox, oy, oz) {
+    const pivot = new T.Group();
+    pivot.position.set(px, py, pz);
+    const mesh = box3(T, w, h, d, color, ox, oy, oz);
+    pivot.add(mesh);
+    g.add(pivot);
+    return pivot;
+  }
+
+  const legL = limb(7, 10, 6, pants, 0, 10, -4, 0, -5, 0);
+  const legR = limb(7, 10, 6, pants, 0, 10, 4, 0, -5, 0);
+  const armL = limb(5, 12, 5, char.outfitColor || char.color, 0, 23, -10.5, 0, -6, 0);
+  const armR = limb(5, 12, 5, char.outfitColor || char.color, 0, 23, 10.5, 0, -6, 0);
+  const body = box3(T, 10, 14, 16, char.outfitColor || char.color, 0, 17, 0);
+  const head = box3(T, 9, 9, 9, skin, 0, 28.5, 0);
+  const hair = box3(T, 10, 3, 10, hairColor, 0, 33.5, 0);
+  g.add(body);
+  g.add(head);
+  g.add(hair);
+  if (char.sex === 'female') {
+    // Long hair down the back (-X side, behind the face).
+    g.add(box3(T, 3, 12, 10, hairColor, -5.5, 27, 0));
+  }
+  g.userData = {
+    legL, legR, armL, armR, body,
+    armLMesh: armL.children[0], armRMesh: armR.children[0],
+  };
+  return g;
+}
+
+/** Draw one character as a 3D low-poly figure (v2), or 2D while on the v1 renderer. */
+export function drawCharacter(pool, char, isActive, time) {
+  if (!isPool(pool)) {
+    drawCharacter2D(pool, char, isActive, time);
+    return;
+  }
+  const T = three();
+  const mesh = pool.get(`char-${char.id}`, () => buildCharacterFigure(T, char));
+  const lift = char.jump > 0 ? 14 : 0;
+  mesh.position.set(char.x, (char.swimming ? -4 : 0) + lift, char.y);
+  mesh.rotation.y = -char.angle;
+  mesh.visible = true;
+  const body = mesh.userData && mesh.userData.body;
+  if (body && body.material && body.material.color) {
+    try {
+      body.material.color.set(char.outfitColor || char.color);
+      for (const key of ['armLMesh', 'armRMesh']) {
+        const arm = mesh.userData[key];
+        if (arm && arm.material && arm.material.color) arm.material.color.set(char.outfitColor || char.color);
+      }
+    } catch {
+      // Invalid colour string: keep the built colour.
+    }
+  }
+  // Walk swing: legs and arms rotate about their pivots (local Z = lateral).
+  const swing = char.moving ? Math.sin(time * 10) * 0.55 : 0;
+  const ud = mesh.userData || {};
+  if (ud.legL) ud.legL.rotation.z = swing;
+  if (ud.legR) ud.legR.rotation.z = -swing;
+  if (ud.armL) ud.armL.rotation.z = -swing * 0.8;
+  if (ud.armR) ud.armR.rotation.z = swing * 0.8;
+  if (isActive) {
+    const ring = pool.get('char-ring', () => {
+      if (!T) return dummyObj();
+      const m = new T.Mesh(
+        new T.RingGeometry(18, 22, 24),
+        new T.MeshLambertMaterial({ color: 0xfde68a, side: T.DoubleSide }),
+      );
+      m.rotation.x = -Math.PI / 2;
+      return m;
+    });
+    ring.position.set(char.x, 1.5, char.y);
+    ring.visible = true;
+  }
+}
+
 /** Draw one top-down character: shadow, outfit body, head, facing tick, name tag. */
-export function drawCharacter(ctx, char, isActive, time) {
+function drawCharacter2D(ctx, char, isActive, time) {
   const bob = char.moving ? Math.sin(time * 10) * 2 : 0;
   const lift = char.jump > 0 ? 6 : 0;
   ctx.save();

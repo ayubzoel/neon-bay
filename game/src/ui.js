@@ -10,6 +10,7 @@ function $(id) {
 export function createUI(handlers) {
   const toast = $('toast');
   let toastTimer = 0;
+  let orbitHintShown = false;
 
   function showPanel(name) {
     for (const id of PANELS) $(id).classList.toggle('hidden', id !== name);
@@ -165,6 +166,12 @@ export function createUI(handlers) {
       toast.classList.add('show');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+    },
+    /** v2 camera hint: shown once per session, the first time play starts. */
+    showOrbitHintOnce() {
+      if (orbitHintShown) return;
+      orbitHintShown = true;
+      this.showToast('Drag mouse to orbit the camera — scroll to zoom.');
     },
   };
 }

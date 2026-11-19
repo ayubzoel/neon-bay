@@ -127,7 +127,99 @@ export function pickpocket(state, npc) {
   return false;
 }
 
-export function drawNpcs(ctx, state, time) {
+// --- v2 3D drawing -------------------------------------------------------
+// First argument is the mesh pool; a canvas context falls back to the v1 2D
+// drawing so the game stays playable until the 3D renderer lands.
+function isPool(arg) {
+  return !!arg && typeof arg.get === 'function';
+}
+
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new T.Mesh(
+    new T.BoxGeometry(w, h, d),
+    new T.MeshLambertMaterial({ color }),
+  );
+  m.position.set(x, y, z);
+  return m;
+}
+
+/** Low-poly pedestrian, ~29 tall, facing +X, legs swinging while walking. */
+function buildPedFigure(T, npc) {
+  if (!T) return dummyObj();
+  const g = new T.Group();
+  const pants = 0x1f2937;
+  function leg(pz) {
+    const pivot = new T.Group();
+    pivot.position.set(0, 9, pz);
+    pivot.add(box3(T, 6, 9, 5, pants, 0, -4.5, 0));
+    g.add(pivot);
+    return pivot;
+  }
+  const legL = leg(-3.5);
+  const legR = leg(3.5);
+  const body = box3(T, 9, 12, 14, npc.color || '#e2e8f0', 0, 15, 0);
+  const head = box3(T, 8, 8, 8, 0xe8b98a, 0, 25, 0);
+  g.add(body);
+  g.add(head);
+  g.userData = { legL, legR, body };
+  return g;
+}
+
+export function drawNpcs(pool, state, time) {
+  if (!isPool(pool)) {
+    drawNpcs2D(pool, state, time);
+    return;
+  }
+  const T = three();
+  state.npcs.forEach((npc, i) => {
+    const mesh = pool.get(`npc-${i}`, () => buildPedFigure(T, npc));
+    mesh.position.set(npc.x, 0, npc.y);
+    mesh.rotation.y = -npc.angle;
+    mesh.visible = true;
+    const ud = mesh.userData || {};
+    if (ud.body && ud.body.material && ud.body.material.color) {
+      try {
+        ud.body.material.color.set(npc.color || '#e2e8f0');
+      } catch {
+        // Keep the built colour on a bad colour string.
+      }
+    }
+    const walking = npc.state === 'walk' || npc.state === 'flee';
+    const swing = walking ? Math.sin(time * 8 + npc.x * 0.05) * 0.5 : 0;
+    if (ud.legL) ud.legL.rotation.z = swing;
+    if (ud.legR) ud.legR.rotation.z = -swing;
+    if (npc.kind === 'giver') {
+      // Floating yellow octahedron "!" marker, bobbing above the giver.
+      const mark = pool.get(`npc-mark-${i}`, () => {
+        if (!T) return dummyObj();
+        return new T.Mesh(
+          new T.OctahedronGeometry(9),
+          new T.MeshLambertMaterial({ color: 0xfde047, emissive: 0xfde047, emissiveIntensity: 0.4 }),
+        );
+      });
+      mark.position.set(npc.x, 44 + Math.sin(time * 4) * 3, npc.y);
+      mark.rotation.y = time * 2;
+      mark.visible = true;
+    }
+  });
+}
+
+function drawNpcs2D(ctx, state, time) {
   for (const npc of state.npcs) {
     const bob = npc.state === 'walk' ? Math.sin(time * 8 + npc.x) * 1.5 : 0;
     ctx.save();

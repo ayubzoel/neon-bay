@@ -2,6 +2,8 @@
 // and save/load. Every system reads and writes this object; nothing else
 // holds game progress, so saving is one JSON dump of the fields below.
 import {
+  CAMERA_DIST_DEFAULT,
+  CAMERA_PITCH_DEFAULT,
   DAY_LENGTH_SECONDS,
   MINUTES_PER_DAY,
   PLAYER_MAX_HP,
@@ -74,7 +76,7 @@ export function createGameState(seed) {
     message: '',
     messageTimer: 0,
     objective: 'Talk to Rico at the Neon Diner to start your story.',
-    camera: { x: 700, y: 1750 },
+    camera: { x: 700, y: 1750, yaw: 0, pitch: CAMERA_PITCH_DEFAULT, dist: CAMERA_DIST_DEFAULT },
     muted: false,
     elapsed: 0,
   };

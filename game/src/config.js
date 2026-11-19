@@ -96,3 +96,13 @@ export const MAIN_MISSION_COUNT = 60;
 export const MISSIONS_PER_DISTRICT = 20;
 export const SIDE_QUEST_POOL = 100;
 export const DISTRICT_UNLOCK_MISSION = [0, 20, 40];
+
+// Third-person 3D camera (v2): orbit yaw, pitch and follow distance.
+export const CAMERA_PITCH_DEFAULT = 0.45;
+export const CAMERA_DIST_DEFAULT = 260;
+export const CAMERA_MIN_DIST = 140;
+export const CAMERA_MAX_DIST = 520;
+export const CAMERA_PITCH_MIN = 0.15;
+export const CAMERA_PITCH_MAX = 1.1;
+// Height of a standing character mesh, in world units (used to scale figures).
+export const CHARACTER_HEIGHT = 34;

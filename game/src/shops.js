@@ -128,3 +128,60 @@ export function sleepAtSafeHouse(state) {
   saveGame(state);
   showMessage(state, 'You slept like a rock. Fresh day, full health.', 4);
 }
+
+// --- v2 3D drawing -------------------------------------------------------
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+// Sign board colour per shop kind.
+const SHOP_SIGN_COLORS = {
+  food: 0xf59e0b,
+  gun: 0xef4444,
+  clothes: 0xec4899,
+  mods: 0x22c55e,
+};
+
+/**
+ * A 3D sign over every shop: a pole plus a coloured board, so shops read
+ * from the third-person camera. Called every frame by the 3D renderer.
+ */
+export function drawShopSigns(pool, world) {
+  if (!pool || typeof pool.get !== 'function' || !world || !world.shops) return;
+  const T = three();
+  for (const shop of world.shops) {
+    const cx = shop.x + (shop.w || 90) / 2;
+    const cz = shop.y + (shop.h || 70) / 2;
+    const color = SHOP_SIGN_COLORS[shop.kind] || 0x0ea5e9;
+    const sign = pool.get(`shop-sign-${shop.id}`, () => {
+      if (!T) return dummyObj();
+      const g = new T.Group();
+      const pole = new T.Mesh(
+        new T.BoxGeometry(4, 40, 4),
+        new T.MeshLambertMaterial({ color: 0x334155 }),
+      );
+      pole.position.set(0, 20, 0);
+      const board = new T.Mesh(
+        new T.BoxGeometry(64, 16, 4),
+        new T.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 }),
+      );
+      board.position.set(0, 44, 0);
+      g.add(pole);
+      g.add(board);
+      return g;
+    });
+    sign.position.set(cx, 0, cz);
+    sign.visible = true;
+  }
+}

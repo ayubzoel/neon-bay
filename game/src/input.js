@@ -22,6 +22,21 @@ export function createInput(canvas) {
   const touchEdge = { enter: false, interact: false, switch: false };
   let touchRun = false;
 
+  // --- v2 camera orbit: drag on the canvas orbits, wheel zooms. A press
+  // only counts as a click (shoot) when it is released without orbiting,
+  // so dragging the camera never fires the weapon. Touch: only drags that
+  // start on the right half of the screen orbit (left half is the stick).
+  let orbitDx = 0;
+  let orbitDy = 0;
+  let orbitWheel = 0;
+  let drag = null; // { pointerId, lastX, lastY, startX, startY, orbiting }
+  const ORBIT_MIN_PX = 6;
+
+  function cancelDrag() {
+    drag = null;
+    mouse.down = false;
+  }
+
   function onKeyDown(event) {
     if (event.code === 'Tab') {
       event.preventDefault();
@@ -57,7 +72,7 @@ export function createInput(canvas) {
   });
   window.addEventListener('blur', () => {
     held.clear();
-    mouse.down = false;
+    cancelDrag();
     joy.x = 0;
     joy.y = 0;
     touchRun = false;
@@ -66,16 +81,55 @@ export function createInput(canvas) {
   canvas.addEventListener('pointermove', (event) => {
     mouse.x = event.clientX;
     mouse.y = event.clientY;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const dx = event.clientX - drag.lastX;
+    const dy = event.clientY - drag.lastY;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    if (!drag.orbiting) {
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= ORBIT_MIN_PX) return;
+      drag.orbiting = true;
+      mouse.down = false;
+      mouse.clicked = false;
+    }
+    orbitDx += dx;
+    orbitDy += dy;
   });
   canvas.addEventListener('pointerdown', (event) => {
     mouse.x = event.clientX;
     mouse.y = event.clientY;
+    // Touch drags on the left half belong to the joystick area, not the camera.
+    if (event.pointerType === 'touch' && event.clientX < window.innerWidth / 2) return;
+    drag = {
+      pointerId: event.pointerId,
+      lastX: event.clientX, lastY: event.clientY,
+      startX: event.clientX, startY: event.clientY,
+      orbiting: false,
+    };
     mouse.down = true;
-    mouse.clicked = true;
+    // clicked is set on pointerup, only when this press never became an orbit.
   });
-  window.addEventListener('pointerup', () => {
+  function endDrag(event) {
+    if (!drag) {
+      mouse.down = false;
+      return;
+    }
+    if (event && event.pointerId !== drag.pointerId) return;
+    const wasOrbit = drag.orbiting;
+    drag = null;
     mouse.down = false;
+    if (!wasOrbit) mouse.clicked = true;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', cancelDrag);
+  window.addEventListener('pointerup', (event) => {
+    if (drag) endDrag(event);
+    else mouse.down = false;
   });
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    orbitWheel += event.deltaY;
+  }, { passive: false });
 
   // Touch controls: joystick + action buttons, wired to the same state.
   const touchRoot = document.getElementById('touch');
@@ -184,6 +238,14 @@ export function createInput(canvas) {
       actions = 0;
       return taken;
     },
+    /** Take accumulated camera-orbit input since the last call, then clear it. */
+    takeOrbit() {
+      const out = { dx: orbitDx, dy: orbitDy, wheel: orbitWheel };
+      orbitDx = 0;
+      orbitDy = 0;
+      orbitWheel = 0;
+      return out;
+    },
     /** Clear per-frame edges after the frame's steps have read them.
      *  Only the mouse click is cleared here: key presses stay queued so a
      *  tap that lands while the frame is drawing is read by the next frame
@@ -195,6 +257,7 @@ export function createInput(canvas) {
      *  in a menu does not fire the moment play resumes. */
     clearStaleEdges() {
       mouse.clicked = false;
+      cancelDrag();
       pressedSet.clear();
       touchEdge.enter = false;
       touchEdge.interact = false;

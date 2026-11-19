@@ -66,7 +66,12 @@ createServer((request, response) => {
     'content-length': size,
     'cache-control': 'no-store',
   });
+  // HEAD answers with headers only (used by uptime/health checks); GET streams the file.
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
-  console.log(`game/ is on http://localhost:${port}`);
+  console.log(`Neon Bay 3D — open http://localhost:${port}/`);
 });

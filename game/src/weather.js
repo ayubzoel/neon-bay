@@ -1,5 +1,10 @@
 // Neon Bay — weather & lighting.
-// Pure day/night cycle + rain overlay. No assets, no network, canvas primitives only.
+// v2: computeLighting is unchanged (the renderer still uses it). The old
+// 2D overlay (drawWeatherOverlay) is gone — weather is now real 3D light:
+// createWeather(scene) installs a sun, a hemisphere light and rain points,
+// and update(state, dt) drives them from the game clock. No assets, no network.
+// Sky palettes come from SKY_COLORS in data.js (day/dusk/night/rain).
+import { SKY_COLORS } from './data.js';
 
 /**
  * Compute lighting for the current game clock.
@@ -38,80 +43,102 @@ export function computeLighting(state) {
   };
 }
 
-// Deterministic 0..1 hash of (seed, index): stable per frame, no stored state.
-function hash01(seed, index) {
-  const s = Math.sin(seed * 127.1 + index * 311.7) * 43758.5453;
-  return s - Math.floor(s);
-}
+const RAIN_COUNT = 800;
+const RAIN_W = 700;
+const RAIN_H = 420;
+const RAIN_D = 700;
+
+const DAY_SKY = new THREE.Color(SKY_COLORS.day.sky);
+const DUSK_SKY = new THREE.Color(SKY_COLORS.dusk.sky);
+const NIGHT_SKY = new THREE.Color(SKY_COLORS.night.sky);
+const RAIN_SKY = new THREE.Color(SKY_COLORS.rain.sky);
+const _sky = new THREE.Color();
+const _tmp = new THREE.Color();
 
 /**
- * Paint the weather overlay over the visible world rect.
- * @param {CanvasRenderingContext2D} ctx
- * @param {object} state - game state
- * @param {{ x: number, y: number, w: number, h: number }} view - visible world rect
- * @param {number} dt - frame delta in seconds (unused; rain animates off the clock)
+ * Install the 3D weather rig (sun, hemisphere light, rain) into the scene.
+ * @param {THREE.Scene} scene
+ * @returns {{ update: (state: object, dt: number) => void }}
  */
-export function drawWeatherOverlay(ctx, state, view, dt) {
-  if (!ctx || !view || !state) return;
-  const w = view.w || 0;
-  const h = view.h || 0;
-  if (w <= 0 || h <= 0) return;
+export function createWeather(scene) {
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+  sun.position.set(400, 600, 300);
+  scene.add(sun);
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x3a3f4a, 0.9);
+  scene.add(hemi);
 
-  const { darkness, tint, rainIntensity } = computeLighting(state);
-
-  ctx.save();
-  try {
-    // Night darkness: a translucent tint over the whole visible rect.
-    if (darkness > 0) {
-      ctx.globalAlpha = darkness;
-      ctx.fillStyle = tint;
-      ctx.fillRect(view.x, view.y, w, h);
-      ctx.globalAlpha = 1;
-    }
-
-    // Soft moon glow in the top-right of the view on dark nights.
-    if (darkness > 0.35) {
-      const mx = view.x + w * 0.86;
-      const my = view.y + h * 0.16;
-      const glowR = Math.min(w, h) * 0.11;
-      const glow = ctx.createRadialGradient(mx, my, 2, mx, my, glowR);
-      glow.addColorStop(0, 'rgba(226, 232, 240, 0.55)');
-      glow.addColorStop(0.35, 'rgba(203, 213, 225, 0.18)');
-      glow.addColorStop(1, 'rgba(203, 213, 225, 0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(mx, my, glowR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(241, 245, 249, 0.9)';
-      ctx.beginPath();
-      ctx.arc(mx, my, Math.max(6, glowR * 0.16), 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Rain streaks. Never throws when rain is 0 — the loop simply draws nothing.
-    if (rainIntensity > 0) {
-      const now = (typeof performance !== 'undefined' && performance.now)
-        ? performance.now()
-        : Date.now();
-      const tick = now / 16; // ~60 fps frame counter
-      const count = Math.round(rainIntensity * 120);
-      const fallSpeed = 0.35 + rainIntensity * 0.4; // fraction of view height per frame
-      ctx.strokeStyle = 'rgba(174, 194, 224, 0.5)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let i = 0; i < count; i += 1) {
-        const rx = hash01(1, i);
-        const ry = hash01(2, i);
-        const x = view.x + rx * w;
-        // Streaks fall over time; the modulo wraps them back to the top.
-        const y = view.y + (((ry + tick * fallSpeed * (0.6 + rx * 0.8)) % 1) + 1) % 1 * h;
-        const len = 10 + hash01(3, i) * 8;
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - len * 0.25, y + len);
-      }
-      ctx.stroke();
-    }
-  } finally {
-    ctx.restore();
+  // Rain: one Points cloud in a box around the camera focus. The cloud
+  // itself is repositioned to the focus each frame; drops fall and wrap.
+  const positions = new Float32Array(RAIN_COUNT * 3);
+  const speeds = new Float32Array(RAIN_COUNT);
+  for (let i = 0; i < RAIN_COUNT; i += 1) {
+    positions[i * 3] = (Math.random() - 0.5) * RAIN_W;
+    positions[i * 3 + 1] = Math.random() * RAIN_H;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * RAIN_D;
+    speeds[i] = 260 + Math.random() * 220;
   }
+  const rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const rainMat = new THREE.PointsMaterial({
+    color: 0xaec2e0, size: 2.2, transparent: true, opacity: 0,
+    sizeAttenuation: true, depthWrite: false,
+  });
+  const rain = new THREE.Points(rainGeo, rainMat);
+  rain.visible = false;
+  rain.frustumCulled = false;
+  scene.add(rain);
+
+  function update(state, dt) {
+    const { darkness, rainIntensity } = computeLighting(state);
+    const minutes = state && state.time && Number.isFinite(state.time.minutes) ? state.time.minutes : 12 * 60;
+    const hour = ((minutes / 60) % 24 + 24) % 24;
+
+    // Sun angle: rises 06:00, sets 18:00. At night it becomes dim moonlight.
+    const sunAngle = ((hour - 6) / 12) * Math.PI;
+    const elev = Math.sin(sunAngle);
+    const fx = state && state.camera ? state.camera.x || 0 : 0;
+    const fz = state && state.camera ? state.camera.y || 0 : 0;
+    if (elev > 0) {
+      sun.position.set(fx + Math.cos(sunAngle) * 900, 120 + elev * 700, fz + 320);
+      sun.intensity = 1.15 - darkness * 0.9;
+      // Warm at dawn/dusk, white at noon.
+      const warm = Math.max(0, 1 - elev * 2.2);
+      sun.color.setRGB(1, 1 - warm * 0.25, 1 - warm * 0.45);
+    } else {
+      sun.position.set(fx - 300, 500, fz - 200);
+      sun.intensity = 0.22;
+      sun.color.setHex(0x8ea2c8);
+    }
+    hemi.intensity = 0.95 - darkness * 0.55;
+
+    // Sky + fog: day blue, dusk orange, night dark, rain grey.
+    _sky.copy(DAY_SKY);
+    if (darkness > 0) {
+      const dusk = hour >= 17 && hour < 20 ? Math.max(0, 1 - Math.abs(hour - 18.5) / 1.5) : 0;
+      if (dusk > 0) _tmp.copy(DUSK_SKY).lerp(DAY_SKY, 1 - dusk);
+      else _tmp.copy(NIGHT_SKY);
+      _sky.lerp(_tmp, Math.min(1, darkness * 2));
+    }
+    if (rainIntensity > 0) _sky.lerp(RAIN_SKY, rainIntensity * 0.6);
+    scene.background = _sky;
+    if (scene.fog) scene.fog.color.copy(_sky);
+
+    // Rain follows the camera focus and falls.
+    rain.visible = rainIntensity > 0.03;
+    if (rain.visible) {
+      rainMat.opacity = 0.55 * rainIntensity;
+      rain.position.set(fx, 0, fz);
+      if (dt > 0) {
+        const pos = rainGeo.attributes.position.array;
+        for (let i = 0; i < RAIN_COUNT; i += 1) {
+          let y = pos[i * 3 + 1] - speeds[i] * dt;
+          if (y < 0) y += RAIN_H;
+          pos[i * 3 + 1] = y;
+        }
+        rainGeo.attributes.position.needsUpdate = true;
+      }
+    }
+  }
+
+  return { update };
 }

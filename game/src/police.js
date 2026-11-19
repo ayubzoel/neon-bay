@@ -3,6 +3,10 @@
 // Every unit shoots, and the tank fires shells that explode.
 import { WANTED, WANTED_SIGHT_RANGE } from './config.js';
 import { activeCharacter, addWanted } from './state.js';
+import { playSfx3D } from './audio.js';
+
+// Siren throttle: at most one wail every 2.5 s, from the nearest unit.
+let sirenCd = 0;
 
 function spawnPoint(state, world) {
   const hero = activeCharacter(state);
@@ -121,12 +125,115 @@ export function updatePolice(state, world, dt) {
     }
   }
   state.policeCanSee = anyCanSee;
+  // Positional siren: the nearest unit wails when it is close enough to hear.
+  sirenCd -= dt;
+  if (sirenCd <= 0 && state.police.length > 0) {
+    let nearest = null;
+    let nearestD = Infinity;
+    for (const p of state.police) {
+      const d = Math.hypot(p.x - hero.x, p.y - hero.y);
+      if (d < nearestD) {
+        nearestD = d;
+        nearest = p;
+      }
+    }
+    if (nearest && nearestD < 900) {
+      playSfx3D('siren', nearest.x, nearest.y, hero.x, hero.y);
+      sirenCd = 2.5;
+    }
+  }
   return anyCanSee;
 }
 
 /** A crime the police saw: raise the wanted level. */
 export function commitCrime(state, stars, reason) {
   addWanted(state, stars, reason);
+}
+
+// --- v2 3D drawing -------------------------------------------------------
+// First argument is the mesh pool; a canvas context falls back to the v1 2D
+// drawing so the game stays playable until the 3D renderer lands.
+function isPool(arg) {
+  return !!arg && typeof arg.get === 'function';
+}
+
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+function box3(T, w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new T.Mesh(
+    new T.BoxGeometry(w, h, d),
+    new T.MeshLambertMaterial({ color }),
+  );
+  m.position.set(x, y, z);
+  return m;
+}
+
+/** Build one police unit as a low-poly 3D group, facing +X. */
+function buildPoliceUnit(T, kind) {
+  if (!T) return dummyObj();
+  const g = new T.Group();
+  if (kind === 'heli') {
+    g.add(box3(T, 40, 12, 16, 0x1e3a5f, 0, 0, 0));
+    g.add(box3(T, 26, 6, 6, 0x1e3a5f, -30, 2, 0));
+    g.add(box3(T, 10, 8, 12, 0xf8fafc, 16, 0, 0));
+    const rotor = box3(T, 72, 1.5, 4, 0x94a3b8, 0, 10, 0);
+    const tail = box3(T, 4, 1.5, 40, 0x94a3b8, 0, 10, 0);
+    const rotorGroup = new T.Group();
+    rotorGroup.position.set(0, 10, 0);
+    rotor.position.set(0, 0, 0);
+    tail.position.set(0, 0, 0);
+    rotorGroup.add(rotor);
+    rotorGroup.add(tail);
+    g.add(rotorGroup);
+    g.userData = { rotor: rotorGroup };
+  } else if (kind === 'tank') {
+    g.add(box3(T, 48, 12, 32, 0x3f6212, 0, 6, 0));
+    g.add(box3(T, 20, 8, 20, 0x65a30d, 0, 16, 0));
+    g.add(box3(T, 32, 4, 4, 0x1a2e05, 24, 16, 0));
+    g.add(box3(T, 52, 4, 6, 0x1a2e05, 0, 2, -16));
+    g.add(box3(T, 52, 4, 6, 0x1a2e05, 0, 2, 16));
+  } else if (kind === 'bike') {
+    g.add(box3(T, 34, 8, 10, 0x1e40af, 0, 6, 0));
+    g.add(box3(T, 10, 10, 8, 0xf8fafc, 4, 12, 0));
+    g.add(box3(T, 8, 8, 8, 0x111827, -12, 5, 0));
+  } else {
+    // Patrol car: black body, white doors, red/blue light bar on top.
+    g.add(box3(T, 46, 10, 22, 0x111827, 0, 5, 0));
+    g.add(box3(T, 24, 8, 20, 0xf8fafc, -2, 13, 0));
+    g.add(box3(T, 10, 4, 10, 0xef4444, -2, 19, -5));
+    g.add(box3(T, 10, 4, 10, 0x3b82f6, -2, 19, 5));
+  }
+  return g;
+}
+
+export function drawPolice(pool, state, time) {
+  if (!isPool(pool)) {
+    for (const p of state.police) drawUnit(pool, p, time);
+    return;
+  }
+  const T = three();
+  state.police.forEach((p, i) => {
+    const mesh = pool.get(`police-${i}-${p.kind}`, () => buildPoliceUnit(T, p.kind));
+    // Helicopters fly above the street; everything else sits on the ground.
+    mesh.position.set(p.x, p.kind === 'heli' ? 70 : 0, p.y);
+    mesh.rotation.y = -p.angle;
+    mesh.visible = true;
+    const rotor = mesh.userData && mesh.userData.rotor;
+    if (rotor) rotor.rotation.y = time * 20;
+  });
 }
 
 function drawUnit(ctx, p, time) {
@@ -194,8 +301,4 @@ function drawUnit(ctx, p, time) {
     ctx.fillStyle = '#ef4444';
     ctx.fillRect(p.x - 18, p.y - 28, 36 * (p.hp / p.maxHp), 5);
   }
-}
-
-export function drawPolice(ctx, state, time) {
-  for (const p of state.police) drawUnit(ctx, p, time);
 }

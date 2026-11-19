@@ -40,6 +40,61 @@ const BUOY_RADIUS = 40;
 let lastView = null;
 let lastInput = null;
 
+// The 2D overlay canvas for screen-based minigames (v2: #mini, added by
+// index.html above the WebGL canvas; created here as a fallback if absent).
+let miniCanvas = null;
+
+function getMiniCanvas() {
+  if (miniCanvas) return miniCanvas;
+  if (typeof document === 'undefined') return null;
+  let canvas = document.getElementById('mini');
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = 'mini';
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.style.cssText = 'position:fixed;inset:0;display:none;z-index:6;touch-action:none;';
+    document.body.appendChild(canvas);
+  }
+  miniCanvas = canvas;
+  wireMiniInput(canvas);
+  return canvas;
+}
+
+// The #mini overlay sits above the game canvas, so its pointer events never
+// reach input.js: forward them to the shared input object instead, so clicks
+// inside a minigame still aim, shoot and press buttons.
+function wireMiniInput(canvas) {
+  if (!canvas || canvas.dataset.neonWired) return;
+  canvas.dataset.neonWired = '1';
+  canvas.addEventListener('pointermove', (event) => {
+    if (lastInput && lastInput.mouse) {
+      lastInput.mouse.x = event.clientX;
+      lastInput.mouse.y = event.clientY;
+    }
+  });
+  canvas.addEventListener('pointerdown', (event) => {
+    if (lastInput && lastInput.mouse) {
+      lastInput.mouse.x = event.clientX;
+      lastInput.mouse.y = event.clientY;
+      lastInput.mouse.down = true;
+      lastInput.mouse.clicked = true;
+    }
+  });
+  canvas.addEventListener('pointerup', () => {
+    if (lastInput && lastInput.mouse) lastInput.mouse.down = false;
+  });
+}
+
+/** Hide the minigame overlay canvas (called by the renderer on other screens). */
+export function hideActivityCanvas() {
+  try {
+    const canvas = miniCanvas || (typeof document !== 'undefined' ? document.getElementById('mini') : null);
+    if (canvas && canvas.style.display !== 'none') canvas.style.display = 'none';
+  } catch {
+    // Hiding must never break the game loop.
+  }
+}
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -751,12 +806,40 @@ function drawGym(ctx, state, view) {
 }
 
 /**
- * Draw the current screen-based minigame full-screen in world coords.
- * @param {CanvasRenderingContext2D} ctx
+ * Draw the current screen-based minigame on the 2D #mini overlay canvas.
+ * v2 form: drawActivity(state, view). The old 3-arg form
+ * drawActivity(ctx, state, view) still works (v1 renderer).
  * @param {object} state - game state (state.activity selects the game)
- * @param {{ x: number, y: number, w: number, h: number }} view - visible world rect
+ * @param {{ x: number, y: number, w: number, h: number }} view - visible rect in CSS px
  */
-export function drawActivity(ctx, state, view) {
+export function drawActivity(a, b, c) {
+  try {
+    // v1 3-arg form: the first argument is a 2D context.
+    if (a && typeof a.fillRect === 'function') {
+      drawActivityOnCtx(a, b, c);
+      return;
+    }
+    const state = a;
+    const view = b;
+    if (!state || !state.activity || !view) return;
+    const canvas = getMiniCanvas();
+    if (!canvas) return;
+    const w = Math.max(1, Math.round(view.w));
+    const h = Math.max(1, Math.round(view.h));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    canvas.style.display = 'block';
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    drawActivityOnCtx(ctx, state, { x: 0, y: 0, w: view.w, h: view.h });
+  } catch {
+    // Drawing must never break the game loop.
+  }
+}
+
+function drawActivityOnCtx(ctx, state, view) {
   try {
     if (!ctx || !state || !state.activity || !view) return;
     lastView = { x: view.x, y: view.y, w: view.w, h: view.h };

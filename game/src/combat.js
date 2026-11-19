@@ -205,7 +205,83 @@ export function updateCombat(state, dt, input, mouseWorld) {
   }
 }
 
-export function drawBullets(ctx, state) {
+// --- v2 3D drawing -------------------------------------------------------
+// First argument is the mesh pool; a canvas context falls back to the v1 2D
+// drawing so the game stays playable until the 3D renderer lands.
+function isPool(arg) {
+  return !!arg && typeof arg.get === 'function';
+}
+
+function three() {
+  return (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+}
+
+function dummyObj() {
+  return {
+    position: { set() {} },
+    rotation: {},
+    scale: { set() {} },
+    visible: true,
+    material: { color: { set() {} }, transparent: false, opacity: 1 },
+    userData: {},
+  };
+}
+
+function sphere3(T, r, color, opts = {}) {
+  const m = new T.Mesh(
+    new T.SphereGeometry(r, 10, 8),
+    new T.MeshLambertMaterial({ color, ...opts }),
+  );
+  return m;
+}
+
+export function drawBullets(pool, state) {
+  if (!isPool(pool)) {
+    drawBullets2D(pool, state);
+    return;
+  }
+  const T = three();
+  state.bullets.forEach((b, i) => {
+    if (b.kind === 'ram') return;
+    const mesh = pool.get(`bullet-${i}-${b.kind}`, () => {
+      if (!T) return dummyObj();
+      if (b.kind === 'rocket' || b.kind === 'shell') return sphere3(T, 6, 0xf97316);
+      if (b.kind === 'grenade') return sphere3(T, 5, 0x22c55e);
+      const m = new T.Mesh(
+        new T.BoxGeometry(14, 2.5, 2.5),
+        new T.MeshLambertMaterial({ color: 0xfde047, emissive: 0xfde047, emissiveIntensity: 0.6 }),
+      );
+      return m;
+    });
+    mesh.position.set(b.x, b.kind === 'grenade' ? 10 : 18, b.y);
+    mesh.rotation.y = -Math.atan2(b.vy, b.vx);
+    mesh.visible = true;
+  });
+  // Particles: explosions grow and fade, sparks/muzzle flashes are small
+  // bright spheres. 'text' particles have no 3D equivalent and are skipped.
+  state.particles.forEach((p, i) => {
+    if (p.kind === 'text') return;
+    const mesh = pool.get(`particle-${i}-${p.kind}`, () => {
+      if (!T) return dummyObj();
+      if (p.kind === 'explosion') {
+        return sphere3(T, 1, 0xf97316, { transparent: true, emissive: 0xf97316, emissiveIntensity: 0.8 });
+      }
+      return sphere3(T, p.kind === 'muzzle' ? 5 : 3, 0xfde047, { emissive: 0xfde047, emissiveIntensity: 0.8 });
+    });
+    if (p.kind === 'explosion') {
+      const t = 1 - p.life / p.max;
+      mesh.scale.set(12 + t * 46, 12 + t * 46, 12 + t * 46);
+      if (mesh.material) mesh.material.opacity = Math.max(0, 1 - t);
+      mesh.position.set(p.x, 10, p.y);
+    } else {
+      mesh.scale.set(1, 1, 1);
+      mesh.position.set(p.x, 18, p.y);
+    }
+    mesh.visible = true;
+  });
+}
+
+function drawBullets2D(ctx, state) {
   for (const b of state.bullets) {
     if (b.kind === 'ram') continue;
     ctx.save();
