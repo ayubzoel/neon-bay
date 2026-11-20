@@ -46,6 +46,81 @@ const SWIM_SPEED_MPS = 1.0;
 
 const RADIUS = 0.4;
 
+// --- v5 spawn safety (Builder A): a spawn point must be validated open
+// ground, never inside a building. The v4 default (700, 1750) sits
+// INSIDE a building solid (world.collides true at r=0.4) — Leo spawned
+// stuck in a wall. findOpenGround() returns the nearest point that is
+// neither inside a solid nor in water, so New Game / Continue / respawn
+// all land on walkable ground.
+
+/** True when (x, y) is walkable: not inside a solid, not in water. */
+export function isOpenGround(world, x, y, unlocked, radius = RADIUS) {
+  if (!world || typeof world.collides !== 'function') return true;
+  if (world.collides(x, y, radius, unlocked)) return false;
+  return !isWater(x, y);
+}
+
+/**
+ * Nearest open ground to (x, y). Tries, in order: the point itself, the
+ * nearest road-lane point (roads are open by construction), then a spiral
+ * search out to `maxDist` m. Deterministic — no rng, so the same spawn
+ * always lands on the same spot. Returns { x, y, moved, dist } where
+ * `moved` is how far the point had to shift (0 = already open).
+ */
+export function findOpenGround(world, x, y, unlocked, radius = RADIUS, maxDist = 400) {
+  if (isOpenGround(world, x, y, unlocked, radius)) return { x, y, moved: 0, dist: 0 };
+  // The road network is the fastest escape: the nearest lane point is
+  // open ground unless a locked gate sits on it (collides() checks the
+  // gates when `unlocked` is passed, so validate the candidate too).
+  if (world && typeof world.nearestRoadPoint === 'function') {
+    try {
+      const road = world.nearestRoadPoint(x, y);
+      const rp = road && (road.point || road);
+      if (rp && Number.isFinite(rp.x) && Number.isFinite(rp.y)) {
+        const d = Math.hypot(rp.x - x, rp.y - y);
+        if (d <= Math.max(150, maxDist) && isOpenGround(world, rp.x, rp.y, unlocked, radius)) {
+          return { x: rp.x, y: rp.y, moved: d, dist: d };
+        }
+      }
+    } catch { /* fall through to the spiral search */ }
+  }
+  // Spiral search: expanding rings, 16 samples per ring, ~2 m steps —
+  // a building is at most a few dozen metres across, so the first open
+  // ring is normally the sidewalk or yard right outside it.
+  const step = 2;
+  for (let r = step; r <= maxDist; r += step) {
+    const n = 16;
+    for (let i = 0; i < n; i += 1) {
+      const a = (i / n) * Math.PI * 2;
+      const cx = x + Math.cos(a) * r;
+      const cy = y + Math.sin(a) * r;
+      if (isOpenGround(world, cx, cy, unlocked, radius)) {
+        return { x: cx, y: cy, moved: r, dist: r };
+      }
+    }
+  }
+  // Nothing open within maxDist (should not happen on this map): return
+  // the input unchanged and let the caller see moved = -1.
+  return { x, y, moved: -1, dist: -1 };
+}
+
+/**
+ * Move the hero (and the camera anchor) onto validated open ground.
+ * Call after New Game, Continue / slot load, and respawn. Returns the
+ * findOpenGround() result so main.js can expose it for tests.
+ */
+export function validateHeroSpawn(state, world) {
+  const hero = activeCharacter(state);
+  const res = findOpenGround(world, hero.x, hero.y, state.unlocked);
+  hero.x = res.x;
+  hero.y = res.y;
+  if (state.camera) {
+    state.camera.x = res.x;
+    state.camera.y = res.y;
+  }
+  return res;
+}
+
 function moveWithCollision(state, world, char, dx, dy) {
   const r = RADIUS;
   // Axis-separated slide: try X first against the (possibly updated)
@@ -111,6 +186,17 @@ export function updatePlayer(state, world, dt, input) {
   }
 
   moveWithCollision(state, world, hero, mx * speed * dt, my * speed * dt);
+
+  // v5b terrain-following: the hero's feet follow the relief. The ground
+  // height comes from world.groundHeightAt (the same mound ellipsoids
+  // world.js draws); roads, sidewalks and plazas are flat by
+  // construction, so this is exactly 0 on every road. Stored on the
+  // hero so drawCharacter (which has no world) can lift the mesh, and
+  // so the camera and tests can read it. Swimming ignores it — water
+  // sits at y=0 and mounds are placed clear of water anyway.
+  hero.groundY = hero.swimming ? 0
+    : (world && typeof world.groundHeightAt === 'function'
+      ? world.groundHeightAt(hero.x, hero.y) : 0);
 
   state.camera.x = hero.x;
   state.camera.y = hero.y;
@@ -303,8 +389,11 @@ export function drawCharacter(pool, char, isActive, time) {
   const mesh = pool.get(`char-${char.id}`, () => buildCharacterFigure(T, char));
   // v4.1 meter scale: a jump lifts Leo ~0.25 m; swimming sinks him just
   // below the waterline (the v3 -1.0 was v3 units, i.e. ~0.05 m).
+  // v5b: the mesh also stands on the terrain — groundY is the mound
+  // height under the hero's feet (0 on roads), sampled in updatePlayer.
   const lift = char.jump > 0 ? 0.25 : 0;
-  mesh.position.set(char.x, (char.swimming ? -0.05 : 0) + lift, char.y);
+  const groundY = char.swimming ? 0 : (char.groundY || 0);
+  mesh.position.set(char.x, (char.swimming ? -0.05 : groundY) + lift, char.y);
   mesh.rotation.y = -char.angle;
   mesh.visible = true;
   // v4: the active weapon rides on Leo's back (main.js keeps
@@ -344,7 +433,7 @@ export function drawCharacter(pool, char, isActive, time) {
       m.rotation.x = -Math.PI / 2;
       return m;
     });
-    ring.position.set(char.x, 0.05, char.y);
+    ring.position.set(char.x, 0.05 + (char.swimming ? 0 : (char.groundY || 0)), char.y);
     ring.visible = true;
   }
 }

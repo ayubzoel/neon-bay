@@ -64,11 +64,17 @@ function weaponName(id) {
 // Graphics quality levels (Settings hook — Builder C calls
 // applyGraphicsQuality from the Settings menu; it applies immediately,
 // no restart). low: short fog, no blob shadows, half the trees/decor.
-// medium: the v3 look. high: full density, far fog, dpr up to 2.
+// medium: the v3 look. high: full density, far fog, dpr up to 1.5.
+// v5 (Builder A): DPR is capped at 1.5 even on high — SwiftShader and
+// other software renderers rasterize every pixel on the CPU, and a 2x
+// buffer quadruples that work for no visible gain on this art style.
+// Density is trimmed too (medium 0.8 -> 0.65, high 1 -> 0.85): the
+// trees are ~450k of the ~490k triangles per frame, and density is the
+// only tree lever that lives on this side of world.js.
 export const QUALITY_LEVELS = {
-  low: { dpr: 1, fogNear: 300, fogFar: 1000, far: 1500, density: 0.5, shadows: false },
-  medium: { dpr: 1.5, fogNear: 800, fogFar: 2600, far: 5000, density: 0.8, shadows: true },
-  high: { dpr: 2, fogNear: 1200, fogFar: 4000, far: 8000, density: 1, shadows: true },
+  low: { dpr: 1, fogNear: 300, fogFar: 900, far: 1500, density: 0.4, shadows: false },
+  medium: { dpr: 1.25, fogNear: 800, fogFar: 2400, far: 4500, density: 0.65, shadows: true },
+  high: { dpr: 1.5, fogNear: 1200, fogFar: 3600, far: 7000, density: 0.85, shadows: true },
 };
 let _qualityLevel = 'high';
 let _qualityApply = null; // set by createRenderer; null until the renderer exists
@@ -132,7 +138,11 @@ export function createRenderer(canvas) {
   const view = { scale: 1, w: 0, h: 0, dpr: 1 };
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // v5 perf: antialias off. In SwiftShader MSAA is resolved on the CPU
+    // for every presented frame (a one-triangle canvas already runs ~30%
+    // faster without it), and on hardware GPUs the loss is one soft edge
+    // pass on otherwise flat-shaded art. No shadow maps either (v4).
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   } catch (err) {
     const el = document.getElementById('webglError');
     if (el) {
@@ -151,6 +161,20 @@ export function createRenderer(canvas) {
   if ('sRGBEncoding' in THREE) renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.shadowMap.enabled = false; // no shadow maps: blob shadows only
 
+  // v5 perf: detect a software GL renderer (SwiftShader / llvmpipe /
+  // other CPU rasterizers) once. On one, the drawing buffer is capped at
+  // DPR 1 and the tree density at 0.5 no matter what Settings says — a
+  // software rasterizer pays per pixel and per triangle, and a user who
+  // picks "high" on SwiftShader would otherwise sit at ~1 fps again.
+  // Hardware GPUs are untouched. Exposed as __neonBay.softwareRendering.
+  let softwareRendering = false;
+  try {
+    const gl = renderer.getContext();
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const glName = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '') : '';
+    softwareRendering = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(glName);
+  } catch { softwareRendering = false; }
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#87b5d6');
   scene.fog = new THREE.Fog(0x87b5d6, QUALITY_LEVELS[_qualityLevel].fogNear, QUALITY_LEVELS[_qualityLevel].fogFar);
@@ -164,23 +188,42 @@ export function createRenderer(canvas) {
   const _ndc = new THREE.Vector2();
   let lastTime = null;
   let lastLightRepaint = -10;
+  let lastNightGlowT = -10;
+  let lastUnlockedKey = null;
   let currentWorld = null;
   let qualityDpr = QUALITY_LEVELS[_qualityLevel].dpr;
+  let effectiveDensity = QUALITY_LEVELS[_qualityLevel].density;
   let shadowsEnabled = QUALITY_LEVELS[_qualityLevel].shadows;
 
   // Apply a quality level now (renderer/scene/camera) and to the world
   // once it loads (density). Registered as the module-level hook above.
+  // v5: on a software renderer the DPR is forced to 1 and the density
+  // capped at 0.5 (see the detection above) — the Settings label stays
+  // what the player picked, only the effective values are clamped.
+  function applyPixelRatio() {
+    // WebGL buffer: a software rasterizer pays per pixel, so render the
+    // 3D buffer at 0.75x there (CSS upscales the canvas — slightly soft,
+    // much cheaper). The 2D HUD keeps full DPR so its text stays sharp.
+    const pr = Math.min(window.devicePixelRatio || 1, qualityDpr) * (softwareRendering ? 0.75 : 1);
+    renderer.setPixelRatio(pr);
+    view.renderDpr = pr;
+  }
   function applyQuality(level) {
     const q = QUALITY_LEVELS[level];
-    qualityDpr = q.dpr;
+    qualityDpr = softwareRendering ? 1 : q.dpr;
+    // v5: the density the world actually uses — the draw() world-load
+    // block must use THIS, not the raw table value, or a software-mode
+    // cap (0.5) would be silently overridden back to the table value
+    // (0.65 medium) on the first frame.
+    effectiveDensity = softwareRendering ? Math.min(q.density, 0.5) : q.density;
     shadowsEnabled = q.shadows;
     scene.fog.near = q.fogNear;
     scene.fog.far = q.fogFar;
     camera.far = q.far;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
+    applyPixelRatio();
     resize();
-    if (currentWorld && currentWorld.setVisualDensity) currentWorld.setVisualDensity(q.density);
+    if (currentWorld && currentWorld.setVisualDensity) currentWorld.setVisualDensity(effectiveDensity);
   }
   _qualityApply = applyQuality;
 
@@ -194,6 +237,7 @@ export function createRenderer(canvas) {
     view.dpr = dpr;
     view.w = window.innerWidth;
     view.h = window.innerHeight;
+    applyPixelRatio();
     renderer.setSize(view.w, view.h, false);
     camera.aspect = view.w / Math.max(1, view.h);
     camera.updateProjectionMatrix();
@@ -224,6 +268,32 @@ export function createRenderer(canvas) {
     let s = value;
     while (s.length > 1 && hctx.measureText(`${s}…`).width > maxWidth) s = s.slice(0, -1);
     return `${s}…`;
+  }
+
+  // --- v5 perf caches ---------------------------------------------------
+  // drawMinimap() + drawNav3D() run every frame, but what they read
+  // changes rarely: the destination list only changes when the mission,
+  // the side pool or an unlock changes, and the GPS path only changes
+  // when the route does or the hero moves ~4 m. Rebuilding both every
+  // frame re-allocates a path array and re-scans 150 NPCs for nothing.
+  let _destCache = { key: '', dests: null };
+  function cachedDestinations(state) {
+    const key = `${state.unlocked ? state.unlocked.join('') : ''}|${state.missions.active ? state.missions.active.id : ''}|${state.missions.activeSide ? state.missions.activeSide.id : ''}|${(state.missions.sidePool || []).length}`;
+    if (_destCache.key !== key || !_destCache.dests) {
+      _destCache = { key, dests: getDestinations(state, state.world) };
+    }
+    return _destCache.dests;
+  }
+  let _navCache = { nav: null, qx: 0, qy: 0, pts: null };
+  function cachedNavPath(state) {
+    const nav = state.nav;
+    if (!nav || !nav.path || nav.path.length < 2) return null;
+    const qx = Math.round(state.hero.x / 4);
+    const qy = Math.round(state.hero.y / 4);
+    if (_navCache.nav !== nav || _navCache.qx !== qx || _navCache.qy !== qy || !_navCache.pts) {
+      _navCache = { nav, qx, qy, pts: navPathFromPlayer(state) };
+    }
+    return _navCache.pts;
   }
 
   function drawMinimap(state) {
@@ -261,7 +331,7 @@ export function createRenderer(canvas) {
     hctx.fillStyle = '#0e7490';
     for (const w of WATER_RECTS) hctx.fillRect(x0 + w.x * sx, y0 + w.y * sy, w.w * sx, w.h * sy);
     // GPS route along the roads, drawn before the markers so they sit on top.
-    const navPts = navPathFromPlayer(state);
+    const navPts = cachedNavPath(state);
     if (navPts && navPts.length > 1) {
       hctx.strokeStyle = '#22d3ee';
       hctx.lineWidth = 2;
@@ -273,7 +343,7 @@ export function createRenderer(canvas) {
       hctx.stroke();
     }
     // Small symbols for every kind of place (same colours as the big map).
-    for (const dest of getDestinations(state, state.world)) {
+    for (const dest of cachedDestinations(state)) {
       const dx = x0 + dest.x * sx;
       const dy = y0 + dest.y * sy;
       if (dest.locked) continue;
@@ -426,7 +496,7 @@ export function createRenderer(canvas) {
     // Flat arrows on the road, one every ~12 m along the route
     // from the player. The cone geometry is pre-rotated to point along +Z,
     // so a Y rotation aims it down the road.
-    const pts = navPathFromPlayer(state);
+    const pts = cachedNavPath(state);
     if (pts && pts.length > 1) {
       let placed = 0;
       for (let i = 0; i + 1 < pts.length && placed < 40; i += 1) {
@@ -568,10 +638,16 @@ export function createRenderer(canvas) {
       worldsAdded.add(world);
     }
     // Locked-district gates vanish once their district unlocks.
-    if (world && world.meshes) {
-      for (const m of world.meshes) {
-        if (m.userData && m.userData.gateDistrict !== undefined) {
-          m.visible = !state.unlocked[m.userData.gateDistrict];
+    // v5 perf: gates only change when an unlock flips, so re-scan the
+    // mesh list only then instead of every frame (321 meshes/frame).
+    const unlockedKey = state.unlocked ? state.unlocked.join('') : '';
+    if (unlockedKey !== lastUnlockedKey) {
+      lastUnlockedKey = unlockedKey;
+      if (world && world.meshes) {
+        for (const m of world.meshes) {
+          if (m.userData && m.userData.gateDistrict !== undefined) {
+            m.visible = !state.unlocked[m.userData.gateDistrict];
+          }
         }
       }
     }
@@ -580,7 +656,9 @@ export function createRenderer(canvas) {
     const hero = state.hero;
     const focusX = state.playerVehicle ? state.playerVehicle.x : hero.x;
     const focusZ = state.playerVehicle ? state.playerVehicle.y : hero.y;
-    const focusY = state.playerVehicle && state.playerVehicle.kind === 'plane' ? (state.playerVehicle.z || 0) : 0;
+    const focusY = state.playerVehicle
+      ? (state.playerVehicle.kind === 'plane' ? (state.playerVehicle.z || 0) : 0)
+      : (hero.groundY || 0); // v5b: camera follows Leo up a mound
     const cam = state.camera || {};
     const yaw = Number.isFinite(cam.yaw) ? cam.yaw : 0;
     const pitch = Number.isFinite(cam.pitch) ? cam.pitch : 0.45;
@@ -599,16 +677,44 @@ export function createRenderer(canvas) {
     camera.position.set(focusX - fx * dist * cp, focusY + dist * sp, focusZ - fz * dist * cp);
     camera.lookAt(focusX, focusY + 1, focusZ);
 
+    // v5 perf: tree sectors fully beyond the fog are invisible anyway
+    // (fog colour == sky colour at fogFar), so hide them instead of
+    // rasterizing their ~200k triangles. Sectors carry their own
+    // bounding sphere (world.js makeInstanced, culled=true); the check
+    // is 29 sphere tests per frame. At the spawn this hides 3 of 6
+    // sectors. Lamps/signs stay: they are 2 whole-map meshes + 24
+    // planes, not the cost.
+    if (world && world.densityMeshes && world.densityMeshes.trees) {
+      const fogFar = scene.fog.far;
+      const cx = camera.position.x;
+      const cy = camera.position.y;
+      const cz = camera.position.z;
+      for (const m of world.densityMeshes.trees) {
+        const bs = m.boundingSphere;
+        if (!bs) continue;
+        const dx = bs.center.x - cx;
+        const dy = bs.center.y - cy;
+        const dz = bs.center.z - cz;
+        m.visible = Math.sqrt(dx * dx + dy * dy + dz * dz) - bs.radius < fogFar;
+      }
+    }
+
     // The world just loaded (or changed): apply the pending visual
     // density from the current quality level (low/medium hide trees).
+    // v5: effectiveDensity, not the raw table value — see applyQuality.
     if (world && world !== currentWorld) {
       currentWorld = world;
-      if (world.setVisualDensity) world.setVisualDensity(QUALITY_LEVELS[_qualityLevel].density);
+      if (world.setVisualDensity) world.setVisualDensity(effectiveDensity);
     }
 
     weather.update(state, dt);
-    // Night glow: lit windows, street lamps and headlights follow the clock.
-    updateNightGlow(state);
+    // Night glow: lit windows, street lamps and headlights follow the
+    // clock — throttled to 2 Hz (v5 perf): darkness moves over minutes,
+    // not frames, and the sweep itself is pure per-frame overhead.
+    if (time - lastNightGlowT >= 0.5) {
+      lastNightGlowT = time;
+      updateNightGlow(state);
+    }
 
     // Traffic lights: repaint the lamp instances once per second from the
     // road graph's cycle — lightStateAt(nodeId, t) returns {ns, ew} per
@@ -648,9 +754,16 @@ export function createRenderer(canvas) {
     if (typeof window !== 'undefined') {
       const nb = window.__neonBay || (window.__neonBay = {});
       nb.worldStats = world ? world.stats || null : null;
+      nb.heroGroundY = hero.groundY || 0; // v5b: mound height under Leo's feet
+      nb.heroPos = { x: hero.x, y: hero.y, groundY: hero.groundY || 0 };
       nb.boats = boatPositions;
       nb.cameraDist = dist;
+      nb.cameraPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+      nb.cameraYaw = yaw;
       nb.quality = _qualityLevel;
+      nb.softwareRendering = softwareRendering;
+      nb.effectiveDpr = qualityDpr;
+      nb.renderDpr = view.renderDpr || qualityDpr;
       nb.rendererInfo = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
       nb.ambience = weather.getAmbienceState ? weather.getAmbienceState() : null;
       let nearNpcs = 0;

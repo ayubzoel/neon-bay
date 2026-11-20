@@ -25,7 +25,7 @@ import { createRenderer } from './render.js';
 import { ACTION_CONFIRM, ACTION_PAUSE, createInput, getBindings, loadBindings, resetBindings, setBinding, setVibration } from './input.js';
 import { createUI, keyDisplay } from './ui.js';
 import { enterVehicle, exitVehicle, nearestVehicle, spawnVehicles, updateVehicles } from './vehicles.js';
-import { nearestInteractable, updatePlayer } from './player.js';
+import { nearestInteractable, updatePlayer, validateHeroSpawn } from './player.js';
 import { spawnNpcs, talkToNpc, pickpocket, updateNpcs } from './npc.js';
 import { updatePolice } from './police.js';
 import { buildSidePool, missionBrief, missionTitle, nextMainMission, objectiveLineFor, startMainMission, startSideQuest, updateEnemies, updateMissions, updatePickups } from './missions.js';
@@ -476,6 +476,9 @@ const settingsHandlers = {
     state.ownedClothes = ['street'];
     buildEntities();
     applySaveData(state, data);
+    // A save (incl. pre-v5 saves) may hold a hero position inside a
+    // building — re-validate before play resumes.
+    window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
     settingsOpen = false;
     settingsReturnTo = null;
     state.screen = SCREEN_PLAY;
@@ -571,6 +574,8 @@ const ui = createUI({
     state.fireCd = 0;
     state.ownedClothes = ['street'];
     buildEntities();
+    // v5 spawn safety: never start inside a building (see player.js).
+    window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
     state.screen = SCREEN_PLAY;
     ui.hideAll();
     announce(t('main.newGame'));
@@ -583,6 +588,7 @@ const ui = createUI({
     state.ownedClothes = ['street'];
     buildEntities();
     if (data) applySaveData(state, data);
+    window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
     state.screen = SCREEN_PLAY;
     ui.hideAll();
     announce(t('main.welcomeBack'));
@@ -614,6 +620,9 @@ const ui = createUI({
     hero.armor = 0;
     hero.x = 560;
     hero.y = 1620;
+    // v5 spawn safety: the respawn point is validated like any other
+    // spawn (it is clear today, but a map change must not strand Leo).
+    window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
     state.wanted = 0;
     state.police = [];
     state.stats.deaths += 1;
@@ -1087,6 +1096,8 @@ function runGame() {
           state.ownedClothes = ['street'];
           buildEntities();
           applySaveData(state, data);
+          // v5 spawn safety: a loaded hero may stand inside a building.
+          window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
         }
         state.screen = SCREEN_PLAY;
         ui.hideAll();
@@ -1275,6 +1286,19 @@ window.__neonBay = {
     close: closeSettings,
     get isOpen() { return settingsOpen; },
     slots: () => listSaveSlots(),
+  },
+  // v5 spawn debug API (Builder A): move the hero to (x, y), validate
+  // the spawn exactly as New Game / Continue / respawn do, and report
+  // where he landed. Test-only — it mutates the hero position.
+  spawn: {
+    validate: (x, y) => {
+      const hero = activeCharacter(state);
+      hero.x = x;
+      hero.y = y;
+      const res = validateHeroSpawn(state, world);
+      return { ...res, collides: world.collides(res.x, res.y, 0.4, state.unlocked) };
+    },
+    get last() { return window.__neonBay.lastSpawn || null; },
   },
   // Cross-builder hook registry (Builders A/B assign their hooks here).
   hooks: window.__neonBayHooks,

@@ -274,12 +274,34 @@ export const NEON_SIGNS = [
 export const WEAPON_SHOP_STOCK = ['rifle', 'shotgun', 'melee', 'grenade', 'bazooka'];
 
 // Sky + lighting palettes for the 3D renderer (weather.js picks one by
-// time of day and rain). Hex strings so both THREE colours and CSS can use them.
+// time of day and rain). Hex strings so both THREE colours and CSS can use
+// them. v5b rewrite: one object per line, day/dusk a touch softer than v4
+// (paler noon sky, warmer dusk, deeper night fog) so the sky, the fog and
+// the hemisphere light agree instead of fighting each other.
 export const SKY_COLORS = {
-  day: { sky: '#87ceeb', fog: '#bcd8e8', horizon: '#cfe8f5', sun: '#fff3b0', ambient: '#ffffff', hemiSky: '#bcd8ff', hemiGround: '#4a5240' },
-  dusk: { sky: '#e8907c', fog: '#d9a08c', horizon: '#f7c873', sun: '#ff9a3d', ambient: '#ffb38a', hemiSky: '#e8a87c', hemiGround: '#3a3230' },
-  night: { sky: '#0b1026', fog: '#131a33', horizon: '#1a2340', sun: '#e2e8f0', ambient: '#8fa3c7', hemiSky: '#25304f', hemiGround: '#0c0f16' },
+  // Noon: pale blue sky, light haze, warm-white sun; ground bounce greenish.
+  day: { sky: '#8ec9e8', fog: '#c3d9e8', horizon: '#dceef7', sun: '#fff3b0', ambient: '#ffffff', hemiSky: '#bcd8ff', hemiGround: '#55604a' },
+  // Golden hour: salmon sky, amber horizon, orange sun.
+  dusk: { sky: '#e08a70', fog: '#d9a08c', horizon: '#f7c873', sun: '#ff9a3d', ambient: '#ffb38a', hemiSky: '#e8a87c', hemiGround: '#3a3230' },
+  // Night: near-black blue, moonlight pale.
+  night: { sky: '#0b1026', fog: '#10162c', horizon: '#1a2340', sun: '#e2e8f0', ambient: '#8fa3c7', hemiSky: '#25304f', hemiGround: '#0c0f16' },
+  // Rain: flat grey-blue all round.
   rain: { sky: '#5b6b7a', fog: '#6b7a80', horizon: '#8a9aa0', sun: '#cfd8dc', ambient: '#b0bec5', hemiSky: '#7a8a94', hemiGround: '#2e3438' },
+};
+
+// Ground palette (v5b rewrite of the v5 block): the single source of truth
+// for the surface colours textures.js paints. The three greys are kept
+// apart on purpose — asphalt dark and cool, sidewalk light and cool,
+// city ground mid and warm — so road, pavement and bare ground never
+// collapse into one grey again. The remaining entries are the canvas base
+// fills; each texture adds speckle and pattern on top of its base.
+export const GROUND_COLORS = {
+  // Roads and pavements.
+  asphalt: '#20242c', sidewalk: '#a9adb3', cityGround: '#7d766a',
+  curb: '#1c2126', lineWhite: '#f8fafc', lineYellow: '#facc15',
+  // Natural and paved ground.
+  grass: '#5a7046', sand: '#dcc078', dirt: '#6b5138', plaza: '#b3a586',
+  rock: '#6b7280',
 };
 
 // Mountain peaks of Cinder Peaks for the 3D terrain (world.js): x/y are

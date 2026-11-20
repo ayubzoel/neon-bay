@@ -37,7 +37,7 @@ import {
 } from './data.js';
 import { RING, buildRoadGraph } from './roadgraph.js';
 import {
-  asphaltMat, concreteMat, facadeMat, grassMat, neonSignMat, nightLightMat, shopSignMat,
+  asphaltMat, cityGroundMat, concreteMat, dirtMat, facadeMat, grassMat, neonSignMat, nightLightMat, plazaMat, shopSignMat,
   rockMat, roofMat, sandMat, sidewalkMat, waterMat,
 } from './textures.js';
 import { addStrings, t } from './i18n.js';
@@ -124,7 +124,7 @@ function hash01(seed, index) {
 
 /** Build the static 3D meshes for the world data. Returns THREE.Object3D[]. */
 function buildMeshes(data) {
-  const { buildings, roads, trees, gates, walls, shops, activitySpots, graph, parks } = data;
+  const { buildings, roads, trees, gates, walls, shops, activitySpots, graph, parks, foothills } = data;
   const meshes = [];
   const geoCache = new Map();
   const matCache = new Map();
@@ -172,7 +172,17 @@ function buildMeshes(data) {
 
   // Shared dummy for composing instance matrices.
   const dummy = new THREE.Object3D();
-  function makeInstanced(geo, mat, items, culled = false) {
+  // `culled` gives the mesh a hand-computed bounding sphere so frustum
+  // culling works; `slack` pads it for the instances' own size. three
+  // r149 has no InstancedMesh.computeBoundingSphere (it arrived in r156)
+  // — calling it crashes the game — and r149's Frustum.intersectsObject
+  // reads object.boundingSphere when it is non-null, so a manual sphere
+  // keeps culling working. (The Node count stub faked the method, which
+  // is why this only surfaced in the real browser.) The default 20 m
+  // slack fits trees and lamps; a 63 m tower sticks ~39 m past its
+  // origin, so building groups pass 45 or the tower top would pop out
+  // of the sphere and get culled while still on screen.
+  function makeInstanced(geo, mat, items, culled = false, slack = 20) {
     if (items.length === 0) return null;
     const im = new THREE.InstancedMesh(geo, mat, items.length);
     items.forEach((it, i) => {
@@ -186,30 +196,18 @@ function buildMeshes(data) {
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     if (culled) {
-      // three r149 has no InstancedMesh.computeBoundingSphere (it arrived
-      // in r156) — calling it crashes the game. Compute the sphere by hand
-      // from the instance positions instead: r149's Frustum.intersectsObject
-      // uses object.boundingSphere when it is non-null, so this also keeps
-      // frustum culling working. +20 m slack covers the instance sizes.
-      // (The Node count stub had computeBoundingSphere faked, which is why
-      // this only surfaced in the real browser.)
-      // Centre = mean of the instance positions; radius = farthest
+      // Centre = mean of the instance positions; radius = the farthest
       // instance from that centre, plus slack for instance sizes.
-      const centre = new THREE.Vector3();
-      for (const it of items) {
-        centre.x += it.x;
-        centre.y += it.y;
-        centre.z += it.z;
-      }
-      centre.divideScalar(Math.max(1, items.length));
+      let cx = 0; let cy = 0; let cz = 0;
+      for (const it of items) { cx += it.x; cy += it.y; cz += it.z; }
+      const n = Math.max(1, items.length);
+      const centre = new THREE.Vector3(cx / n, cy / n, cz / n);
       let radius = 0;
       for (const it of items) {
-        const dx = it.x - centre.x;
-        const dy = it.y - centre.y;
-        const dz = it.z - centre.z;
-        radius = Math.max(radius, Math.sqrt(dx * dx + dy * dy + dz * dz));
+        const d = Math.hypot(it.x - centre.x, it.y - centre.y, it.z - centre.z);
+        if (d > radius) radius = d;
       }
-      im.boundingSphere = new THREE.Sphere(centre, radius + 20);
+      im.boundingSphere = new THREE.Sphere(centre, radius + slack);
       im.frustumCulled = true;
     } else {
       im.frustumCulled = false;
@@ -239,10 +237,19 @@ function buildMeshes(data) {
       uv[uo + 2] = u; uv[uo + 3] = 0;
       uv[uo + 4] = u; uv[uo + 5] = v;
       uv[uo + 6] = 0; uv[uo + 7] = v;
+      // Winding: both triangles must face UP (+Y). The v4 order
+      // (0,1,2),(0,2,3) wound them DOWN — computeVertexNormals gave
+      // (0,-1,0) and FrontSide culling hid every merged ground mesh
+      // from above, so the asphalt, sidewalks, median, curbs, markings
+      // and dirt patches were INVISIBLE in v4 (the "road" everyone saw
+      // was just the district ground plane — the root cause of Ayub's
+      // "aspal, trotoar, tanah terlihat sama"). Fixed in v5 by
+      // swapping the second vertex of each triangle: (0,2,1),(0,3,2).
       const io = i * 6;
       const vo = i * 4;
-      idx[io] = vo; idx[io + 1] = vo + 1; idx[io + 2] = vo + 2;
-      idx[io + 3] = vo; idx[io + 4] = vo + 2; idx[io + 5] = vo + 3;
+      // Triangle A: corners 0, 2, 1. Triangle B: corners 0, 3, 2.
+      idx[io] = vo; idx[io + 1] = vo + 2; idx[io + 2] = vo + 1;
+      idx[io + 3] = vo; idx[io + 4] = vo + 3; idx[io + 5] = vo + 2;
     });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -257,9 +264,11 @@ function buildMeshes(data) {
     return { x0, y0, x1, y1, z00: z, z10: z, z11: z, z01: z };
   }
 
-  // District ground: concrete slabs downtown, sand at the beach, grass and
-  // dirt in the peaks — each a repeating procedural texture, not flat colour.
-  const groundMats = [concreteMat(), sandMat(), grassMat()];
+  // District ground: one repeating procedural texture per district, not
+  // flat colour — warm city ground downtown, sand at the beach, grass in
+  // the peaks. Downtown uses cityGroundMat (warm mid grey-brown), which
+  // is deliberately neither the sidewalk grey nor the asphalt grey.
+  const groundMats = [cityGroundMat(), sandMat(), grassMat()];
   for (let i = 0; i < DISTRICT_RECTS.length; i += 1) {
     const r = DISTRICT_RECTS[i];
     meshes.push(groundPlane(r.w, r.h, groundMats[i], r.x + r.w / 2, r.y + r.h / 2, 0, true));
@@ -268,25 +277,72 @@ function buildMeshes(data) {
   for (const w of WATER_RECTS) {
     meshes.push(groundPlane(w.w, w.h, waterMat(), w.x + w.w / 2, w.y + w.h / 2, 0.02));
   }
-  // Pocket parks: a grass patch on the concrete, so a park reads as a park.
+  // Pocket parks: a grass patch on the city ground, so a park reads as a
+  // park, with a paved plaza in its middle third (the fifth surface).
   for (const p of parks || []) {
-    meshes.push(groundPlane(p.w, p.h, grassMat(), p.x + p.w / 2, p.y + p.h / 2, 0.03, true));
+    const pcx = p.x + p.w / 2;
+    const pcy = p.y + p.h / 2;
+    meshes.push(groundPlane(p.w, p.h, grassMat(), pcx, pcy, 0.03, true));
+    meshes.push(groundPlane(p.w / 3, p.h / 3, plazaMat(), pcx, pcy, 0.035, true));
   }
 
-  // Roads: sidewalks (road + 2.5 m each side), asphalt, and the 1.5 m
-  // median on arterials only — all merged into 3 meshes. Elevated roads
-  // (viaduct deck, hill climbs) slope inside the merged quads: the deck
-  // sits at deckZ, the hill follows its sine profile, with 50 m ramps at
-  // the viaduct ends so cars climb onto the deck instead of stepping up.
+  // Roads: sidewalks, asphalt, and the 1.5 m median on arterials only —
+  // all merged into a few meshes. Elevated roads (viaduct deck, hill
+  // climbs) slope inside the merged quads: the deck sits at deckZ, the
+  // hill follows its sine profile, with 50 m ramps at the viaduct ends
+  // so cars climb onto the deck instead of stepping up.
+  //
+  // The curb is REAL geometry: every flat sidewalk is two raised strips
+  // (0.10 m, against asphalt at 0.04) flanking the road, so the step
+  // reads from the third-person camera, plus a dark curb-shadow strip
+  // hugging each road edge. The strips stop at every intersection — a
+  // raised strip across a cross street would read as a speed bump —
+  // and the four corner squares of each crossing are paved as patches,
+  // so the sidewalk wraps the corner instead of leaving a hole.
+  // Elevated (hill/viaduct) roads keep the old flat sidewalk below the
+  // deck: their profile is a slope, not a step.
   const walkMat = sidewalkMat();
   const roadMat = asphaltMat();
   const medianMat = basic('#f8fafc', { transparent: true, opacity: 0.7 });
+  const curbMat = basic('#1c2126', { transparent: true, opacity: 0.55 });
   const walkQuads = [];
   const roadQuads = [];
   const medianQuads = [];
+  const curbQuads = [];
   function hillProfile(r, y) {
     const span = r.to - r.from;
     return r.hillHeight * Math.sin((Math.PI * (r.to - y)) / span);
+  }
+  // Where a flat road's sidewalk strips may run: the road's own span
+  // minus the corridors (road + 2.5 m sidewalk each side) of every
+  // perpendicular road crossing it. Returns [start, end] intervals along
+  // the road, each longer than 1 m.
+  function stripSegments(r) {
+    const vertical = r.vertical;
+    const lo = vertical ? r.y : r.x;
+    const hi = lo + (vertical ? r.h : r.w);
+    const mid = vertical ? r.x + r.w / 2 : r.y + r.h / 2;
+    const blocked = [];
+    for (const o of roads) {
+      if (o.vertical === vertical || o.elevated) continue;
+      // The crossing road must actually cross this road's centre line,
+      // and its corridor must overlap this road's span.
+      const across = vertical ? [o.x, o.x + o.w] : [o.y, o.y + o.h];
+      if (across[0] > mid || across[1] < mid) continue;
+      const along = vertical ? [o.y, o.y + o.h] : [o.x, o.x + o.w];
+      if (along[1] + 2.5 < lo || along[0] - 2.5 > hi) continue;
+      blocked.push([along[0] - 2.5, along[1] + 2.5]);
+    }
+    blocked.sort((a, b) => a[0] - b[0]);
+    // Subtract the sorted blocked intervals from [lo, hi].
+    const segs = [];
+    let cursor = lo;
+    for (const [bs, be] of blocked) {
+      if (bs > cursor) segs.push([cursor, Math.min(bs, hi)]);
+      if (be > cursor) cursor = be;
+    }
+    if (hi > cursor) segs.push([cursor, hi]);
+    return segs.filter(([a, b]) => b - a > 1);
   }
   for (const r of roads) {
     const cx = r.vertical ? r.x + r.w / 2 : 0;
@@ -295,7 +351,8 @@ function buildMeshes(data) {
     const start = r.vertical ? r.y : r.x;
     const end = start + len;
     if (r.elevated === 'hill') {
-      // 16 sloped strips following the sine profile.
+      // 16 sloped strips following the sine profile (flat sidewalk,
+      // below the deck — see the note above).
       const N = 16;
       for (let i = 0; i < N; i += 1) {
         const y0 = r.from + ((r.to - r.from) * i) / N;
@@ -321,14 +378,40 @@ function buildMeshes(data) {
         roadQuads.push({ x0: cx - r.w / 2, y0: a, x1: cx + r.w / 2, y1: b, z00: za + 0.04, z10: za + 0.04, z11: zb + 0.04, z01: zb + 0.04 });
       }
     } else if (r.vertical) {
-      walkQuads.push(quad(r.x - 2.5, r.y, r.x + r.w + 2.5, r.y + r.h, 0.03));
+      // Raised sidewalk strips (0.10 m), trimmed at every crossing.
+      for (const [a, b] of stripSegments(r)) {
+        walkQuads.push(quad(r.x - 2.5, a, r.x, b, 0.10));
+        walkQuads.push(quad(r.x + r.w, a, r.x + r.w + 2.5, b, 0.10));
+      }
+      // The four paved corner squares of each crossing — emitted here,
+      // from the vertical road's side, so no corner is paved twice.
+      // Side intervals: the 2.5 m strips left and right of the asphalt.
+      // End intervals: the 2.5 m strips before and after the cross road.
+      const sideSpans = [[r.x - 2.5, r.x], [r.x + r.w, r.x + r.w + 2.5]];
+      for (const o of roads) {
+        if (o.vertical || o.elevated) continue;
+        if (o.x > cx || o.x + o.w < cx) continue;
+        if (o.y + o.h < r.y || o.y > r.y + r.h) continue;
+        const endSpans = [[o.y - 2.5, o.y], [o.y + o.h, o.y + o.h + 2.5]];
+        for (const [sx0, sx1] of sideSpans) {
+          for (const [sy0, sy1] of endSpans) walkQuads.push(quad(sx0, sy0, sx1, sy1, 0.10));
+        }
+      }
       roadQuads.push(quad(r.x, r.y, r.x + r.w, r.y + r.h, 0.04));
+      // Curb shadow: a dark 0.4 m strip on the road, hugging each edge.
+      curbQuads.push(quad(r.x, r.y, r.x + 0.4, r.y + r.h, 0.045));
+      curbQuads.push(quad(r.x + r.w - 0.4, r.y, r.x + r.w, r.y + r.h, 0.045));
       if (r.type === 'arterial') medianQuads.push(quad(cx - 0.75, r.y, cx + 0.75, r.y + r.h, 0.05));
     } else {
       // Horizontal roads sit 1 mm higher than vertical ones, so the two
       // asphalt layers never z-fight where they cross.
-      walkQuads.push(quad(r.x, r.y - 2.5, r.x + r.w, r.y + r.h + 2.5, 0.031));
+      for (const [a, b] of stripSegments(r)) {
+        walkQuads.push(quad(a, r.y - 2.5, b, r.y, 0.101));
+        walkQuads.push(quad(a, r.y + r.h, b, r.y + r.h + 2.5, 0.101));
+      }
       roadQuads.push(quad(r.x, r.y, r.x + r.w, r.y + r.h, 0.041));
+      curbQuads.push(quad(r.x, r.y, r.x + r.w, r.y + 0.4, 0.046));
+      curbQuads.push(quad(r.x, r.y + r.h - 0.4, r.x + r.w, r.y + r.h, 0.046));
       if (r.type === 'arterial') medianQuads.push(quad(r.x, cy - 0.75, r.x + r.w, cy + 0.75, 0.051));
     }
   }
@@ -338,39 +421,172 @@ function buildMeshes(data) {
   if (roadMesh) meshes.push(roadMesh);
   const medianMesh = buildMergedMesh(medianQuads, medianMat);
   if (medianMesh) meshes.push(medianMesh);
+  const curbMesh = buildMergedMesh(curbQuads, curbMat);
+  if (curbMesh) meshes.push(curbMesh);
 
-  // Zebra crossings: one striped square per at-grade intersection (a
-  // canvas texture with white bars). A single InstancedMesh covers every
-  // crossing in the city in 1 draw call instead of one mesh per crossing.
-  // Stripes run in ONE direction only (parallel bars, ~0.75 m wide with
-  // 0.75 m gaps) — a real crosswalk is parallel stripes, not a grid.
-  const zebraCanvas = document.createElement('canvas');
-  zebraCanvas.width = 64;
-  zebraCanvas.height = 64;
-  const zctx = zebraCanvas.getContext('2d');
-  zctx.clearRect(0, 0, 64, 64);
-  zctx.fillStyle = 'rgba(248, 250, 252, 0.85)';
-  // Parallel bars only: 6 px wide, 12 px pitch, starting 4 px in, so the
-  // stripes run in a single direction with ~0.75 m gaps between them.
-  for (let x = 4; x < 64; x += 12) {
-    zctx.fillRect(x, 2, 6, 60);
+  // --- Road markings ------------------------------------------------------
+  // The asphalt texture is isotropic (its baked dashes mapped wrong on
+  // horizontal roads), so the lines are geometry now: solid white edge
+  // lines, a dashed yellow centre line on residential streets (3 m dash,
+  // 6 m gap), dashed white lane lines on arterials (+/-4.25 m, between
+  // the inner and outer lanes). Every line stops 12 m short of an
+  // intersection. Elevated roads stay unmarked — their deck is a slope
+  // the flat quads cannot follow.
+  const markingWhite = [];
+  const markingYellow = [];
+  let markingDashCount = 0;
+  const crossNodes = graph ? graph.nodes.filter((n) => n.crossing && n.level === 0) : [];
+  // Flat-road intervals between intersections (12 m clear of each node).
+  function markingSegments(r) {
+    const vertical = r.vertical;
+    const lo = vertical ? r.y : r.x;
+    const hi = lo + (vertical ? r.h : r.w);
+    const mid = vertical ? r.x + r.w / 2 : r.y + r.h / 2;
+    const stops = [];
+    for (const n of crossNodes) {
+      // A node stops this road only if it sits on the road's centre line
+      // (within 1 m) and inside the road's span (1 m of slack).
+      const onCentre = vertical ? Math.abs(n.x - mid) < 1 : Math.abs(n.y - mid) < 1;
+      const along = vertical ? n.y : n.x;
+      if (onCentre && along >= lo - 1 && along <= hi + 1) stops.push(along);
+    }
+    stops.sort((a, b) => a - b);
+    const segs = [];
+    let cursor = lo;
+    for (const s of stops) {
+      if (s - 12 > cursor) segs.push([cursor, s - 12]);
+      if (s + 12 > cursor) cursor = s + 12;
+    }
+    if (hi > cursor) segs.push([cursor, hi]);
+    return segs.filter(([a, b]) => b - a > 4);
   }
-  const zebraTex = new THREE.CanvasTexture(zebraCanvas);
-  const zebraMat = new THREE.MeshBasicMaterial({ map: zebraTex, transparent: true, opacity: 0.8 });
+  const lineWhiteMat = basic('#f8fafc', { transparent: true, opacity: 0.85 });
+  const lineYellowMat = basic('#facc15', { transparent: true, opacity: 0.9 });
+  // One 0.15 m-wide line quad, laid along the road at lateral offset
+  // `off` from the centre line, from `a` to `b` along the road.
+  function paintLine(list, vertical, centre, off, a, b, z) {
+    const halfW = 0.075;
+    if (vertical) list.push(quad(centre + off - halfW, a, centre + off + halfW, b, z));
+    else list.push(quad(a, centre + off - halfW, b, centre + off + halfW, z));
+  }
+  for (const r of roads) {
+    if (r.elevated) continue;
+    const half = r.vertical ? r.w / 2 : r.h / 2;
+    const c = r.vertical ? r.x + r.w / 2 : r.y + r.h / 2;
+    const z = r.vertical ? 0.05 : 0.051;
+    for (const [a, b] of markingSegments(r)) {
+      // Edge lines: solid white, just inside the curb.
+      for (const s of [-1, 1]) paintLine(markingWhite, r.vertical, c, s * (half - 0.35), a, b, z);
+      // Dashes: 3 m on, 6 m off.
+      for (let p = a; p + 3 <= b; p += 9) {
+        if (r.type === 'arterial') {
+          for (const s of [-1, 1]) paintLine(markingWhite, r.vertical, c, s * 4.25, p, p + 3, z);
+        } else {
+          paintLine(markingYellow, r.vertical, c, 0, p, p + 3, z);
+        }
+        markingDashCount += 1;
+      }
+    }
+  }
+  const markingWhiteMesh = buildMergedMesh(markingWhite, lineWhiteMat);
+  if (markingWhiteMesh) meshes.push(markingWhiteMesh);
+  const markingYellowMesh = buildMergedMesh(markingYellow, lineYellowMat);
+  if (markingYellowMesh) meshes.push(markingYellowMesh);
+
+  // Zebra crossings: one striped crossing on EVERY approach of every
+  // at-grade intersection, sized to the road it crosses (7 m
+  // residential, 16 m arterial — the old 8x8 square was too narrow for
+  // the ring road and too wide for a side street). Stripes run parallel
+  // to the traffic they face. Two textures (residential / arterial) keep
+  // the stripe width at ~0.75 m on both widths.
+  // Paint a 64x64 stripe texture: vertical bars of `bar` px every
+  // `pitch` px, starting at `first`.
+  function stripeTexture(first, pitch, bar) {
+    const cv = document.createElement('canvas');
+    cv.width = 64;
+    cv.height = 64;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 64, 64);
+    g.fillStyle = 'rgba(248, 250, 252, 0.85)';
+    for (let x = first; x < 64; x += pitch) g.fillRect(x, 2, bar, 60);
+    return new THREE.CanvasTexture(cv);
+  }
+  const zebraMatRes = new THREE.MeshBasicMaterial({ map: stripeTexture(4, 12, 6), transparent: true, opacity: 0.8 });
+  const zebraMatArt = new THREE.MeshBasicMaterial({ map: stripeTexture(2, 6, 3), transparent: true, opacity: 0.8 });
+  let zebraCount = 0;
   if (graph) {
     const zebraGeo = new THREE.PlaneGeometry(8, 8);
     zebraGeo.rotateX(-Math.PI / 2);
-    const spots = graph.nodes.filter((n) => n.crossing && n.level === 0);
-    const zebraMesh = makeInstanced(zebraGeo, zebraMat, spots.map((n) => ({
-      x: n.x, y: 0.06, z: n.y, sx: 1, sy: 1, sz: 1,
-    })));
-    if (zebraMesh) meshes.push(zebraMesh);
+    const resItems = [];
+    const artItems = [];
+    // The flat roads meeting at this node, and the widest of each
+    // direction (the crossing spans the widest road it crosses).
+    function roadsAt(n, vertical) {
+      return roads.filter((rd) => rd.vertical === vertical && !rd.elevated
+        && n.x >= rd.x - 1 && n.x <= rd.x + rd.w + 1 && n.y >= rd.y - 1 && n.y <= rd.y + rd.h + 1);
+    }
+    for (const n of crossNodes) {
+      const vRoads = roadsAt(n, true);
+      const hRoads = roadsAt(n, false);
+      const vHalf = vRoads.length ? Math.max(...vRoads.map((rd) => rd.w / 2)) : 0;
+      const hHalf = hRoads.length ? Math.max(...hRoads.map((rd) => rd.h / 2)) : 0;
+      // Crossing a vertical road: wide in x, 3 m deep, on both approaches.
+      // Wide (arterial) crossings go to the dense-stripe texture.
+      if (vHalf > 0) {
+        for (const s of [-1, 1]) {
+          const item = { x: n.x, y: 0.06, z: n.y + s * (hHalf + 2.5), sx: (vHalf * 2) / 8, sy: 1, sz: 3 / 8, ry: 0 };
+          (vHalf * 2 > 10 ? artItems : resItems).push(item);
+          zebraCount += 1;
+        }
+      }
+      // Crossing a horizontal road: the same, rotated 90 degrees.
+      if (hHalf > 0) {
+        for (const s of [-1, 1]) {
+          const item = { x: n.x + s * (vHalf + 2.5), y: 0.06, z: n.y, sx: (hHalf * 2) / 8, sy: 1, sz: 3 / 8, ry: Math.PI / 2 };
+          (hHalf * 2 > 10 ? artItems : resItems).push(item);
+          zebraCount += 1;
+        }
+      }
+    }
+    const zebraResMesh = makeInstanced(zebraGeo, zebraMatRes, resItems);
+    if (zebraResMesh) meshes.push(zebraResMesh);
+    const zebraArtMesh = makeInstanced(zebraGeo, zebraMatArt, artItems);
+    if (zebraArtMesh) meshes.push(zebraArtMesh);
   }
 
-  // Buildings, v4.1: INSTANCED, in literal metres. One InstancedMesh per
-  // (facade variant, quantized w/h/d) — footprints and heights come from
-  // small discrete sets, so ~3000 buildings collapse into a few dozen draw
-  // calls. Facade materials are white-based (facadeMat('#ffffff', variant))
+  // Map sectors (3 columns x 2 rows), shared by the trees below and
+  // the buildings: every instanced group is split per sector and
+  // frustum-culled, so the renderer only draws the sectors near the
+  // camera instead of the whole 9.6 x 5.4 km map at once (the building
+  // groups used to be one whole-map mesh with frustumCulled=false,
+  // ~180k tris always rendered). A sector's bounding sphere is ~2 km,
+  // so the sectors behind the camera are culled; the ones ahead render.
+  const SECTOR_COLS = 3;
+  const SECTOR_ROWS = 2;
+  const SECTOR_W = WORLD_WIDTH / SECTOR_COLS;
+  const SECTOR_H = WORLD_HEIGHT / SECTOR_ROWS;
+  const SECTORS = [];
+  for (let row = 0; row < SECTOR_ROWS; row += 1) {
+    for (let col = 0; col < SECTOR_COLS; col += 1) {
+      SECTORS.push({
+        x0: col * SECTOR_W, x1: (col + 1) * SECTOR_W,
+        y0: row * SECTOR_H, y1: (row + 1) * SECTOR_H,
+      });
+    }
+  }
+  // Sector index of a point, clamped into the grid (points on the far
+  // edge fall in the last column / row instead of nowhere).
+  function sectorOf(x, y) {
+    const col = Math.min(SECTOR_COLS - 1, Math.max(0, Math.floor(x / SECTOR_W)));
+    const row = Math.min(SECTOR_ROWS - 1, Math.max(0, Math.floor(y / SECTOR_H)));
+    return row * SECTOR_COLS + col;
+  }
+
+  // Buildings: INSTANCED, in literal metres. One InstancedMesh per
+  // (sector, facade variant, quantized w/h/d) — footprints and heights
+  // come from small discrete sets, so ~5000 buildings collapse into a
+  // few dozen draw calls per sector instead of one whole-map mesh.
+  // Facade materials are white-based (facadeMat('#ffffff', variant))
   // and each instance carries its own tint via setColorAt. Facade UVs tile
   // every 9.6 m horizontally and 19.2 m vertically (textures.js), so a
   // window stays ~1.2 x 1.0 m at any building size.
@@ -406,7 +622,10 @@ function buildMeshes(data) {
     const h = b.height;
     const variant = VARIANT[b.kind] !== undefined ? VARIANT[b.kind]
       : Math.floor(hash01(b.y, b.x) * 3);
-    const key = `${variant}|${b.w}x${h}x${b.h}`;
+    // The group key starts with the sector, so each (sector,
+    // variant, size) gets its own culled InstancedMesh.
+    const sec = sectorOf(b.x + b.w / 2, b.y + b.h / 2);
+    const key = `${sec}|${variant}|${b.w}x${h}x${b.h}`;
     if (!bGroups.has(key)) bGroups.set(key, { variant, w: b.w, h, d: b.h, items: [] });
     bGroups.get(key).items.push({
       x: b.x + b.w / 2, y: h / 2, z: b.y + b.h / 2, sx: 1, sy: 1, sz: 1, color: b.color,
@@ -415,31 +634,41 @@ function buildMeshes(data) {
       pyramidRoofs.push({
         x: b.x + b.w / 2, y: h + 0.8, z: b.y + b.h / 2,
         sx: b.w * 0.72, sy: 1.6, sz: b.h * 0.72, ry: Math.PI / 4, color: b.roofColor || '#7c2d12',
+        sec,
       });
     } else {
       flatRoofs.push({
         x: b.x + b.w / 2, y: h + 0.15, z: b.y + b.h / 2, sx: b.w + 0.2, sy: 0.3, sz: b.h + 0.2,
+        sec,
       });
     }
     // A real front door, ~2.1 m tall, on the south face.
     if (b.kind === 'house' || b.kind === 'cabin' || b.kind === 'shop') {
-      doors.push({ x: b.x + b.w / 2, y: 1.05, z: b.y + b.h + 0.15, sx: 1, sy: 2.1, sz: 0.3 });
+      doors.push({ x: b.x + b.w / 2, y: 1.05, z: b.y + b.h + 0.15, sx: 1, sy: 2.1, sz: 0.3, sec });
     }
   }
   for (const g of bGroups.values()) {
-    const im = makeInstanced(buildingGeo(g.w, g.h, g.d), facadeMat('#ffffff', g.variant), g.items);
+    // Culled per sector (slack 45: a 63 m tower extends ~39 m past its
+    // origin, so the default 20 m slack would pop its top off-screen).
+    const im = makeInstanced(buildingGeo(g.w, g.h, g.d), facadeMat('#ffffff', g.variant), g.items, true, 45);
     if (im) meshes.push(im);
   }
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
-  const flatRoofMesh = makeInstanced(unitBox, roofMat(), flatRoofs);
-  if (flatRoofMesh) meshes.push(flatRoofMesh);
+  // Roofs and doors are sector-split like the buildings: one culled
+  // mesh per sector instead of one whole-map mesh. The helper emits the
+  // per-sector instanced mesh for one item list + geometry + material.
+  function sectorInstanced(items, geo, mat) {
+    for (let s = 0; s < SECTORS.length; s += 1) {
+      const m = makeInstanced(geo, mat, items.filter((r) => r.sec === s), true);
+      if (m) meshes.push(m);
+    }
+  }
+  sectorInstanced(flatRoofs, unitBox, roofMat());
   const pyramidGeo = new THREE.ConeGeometry(1, 1, 4);
   // White base so each roof's instanceColor shows true (a coloured base
   // would multiply and muddy it).
-  const pyramidMesh = makeInstanced(pyramidGeo, std('#ffffff'), pyramidRoofs);
-  if (pyramidMesh) meshes.push(pyramidMesh);
-  const doorMesh = makeInstanced(unitBox, std('#5b3a1e'), doors);
-  if (doorMesh) meshes.push(doorMesh);
+  sectorInstanced(pyramidRoofs, pyramidGeo, std('#ffffff'));
+  sectorInstanced(doors, unitBox, std('#5b3a1e'));
 
   // Neon signs: one glowing plane per sign, on the south face of a tall
   // building (towers downtown, hotels at the beach), ~62% up the facade.
@@ -509,34 +738,26 @@ function buildMeshes(data) {
     }
   }
 
-  // Trees, v4.1: INSTANCED and SECTOR-SPLIT — two trunk meshes (normal +
+  // Trees: INSTANCED and SECTOR-SPLIT — two trunk meshes (normal +
   // palm) and one crown mesh per kind (pine cone, oak sphere, park sphere,
-  // palm sphere), per map sector (3 x 2). Each sector's meshes carry their
-  // own bounding sphere and frustumCulled = true, so the renderer only
-  // draws the sectors near the camera instead of ~4000 trees at once.
-  // Sizes are realistic in metres: pine/oak/park 4-8 m, coconut palm
-  // 10-15 m, trunk ~0.25 m thick, crown radius 2-4 m.
+  // palm sphere), per map sector (SECTORS is defined above, before the
+  // buildings — the buildings reuse the same sectors).
   const trunkGeo = new THREE.CylinderGeometry(0.12, 0.2, 1, 6);
   trunkGeo.translate(0, 0.5, 0);
   const palmTrunkGeo = new THREE.CylinderGeometry(0.1, 0.16, 1, 6);
   palmTrunkGeo.translate(0, 0.5, 0);
   const pineCrownGeo = new THREE.ConeGeometry(1, 1, 6);
   pineCrownGeo.translate(0, 0.5, 0);
-  const sphereCrownGeo = new THREE.SphereGeometry(1, 6, 4);
+  // 5x3 segments = 30 tris per crown instead of the v4 6x4 = 48: the
+  // same rounded crown at street distance, ~18 tris saved on every oak,
+  // park and palm crown in the city.
+  const sphereCrownGeo = new THREE.SphereGeometry(1, 5, 3);
   sphereCrownGeo.translate(0, 0.5, 0);
   const trunkMat = std('#78350f');
   const pineMat = std('#166534');
   const palmMat = std('#15803d');
   const oakMat = std('#2d6a2e');
   const parkMat = std('#22c55e');
-  const SECTORS = [
-    { x0: 0, x1: 3200, y0: 0, y1: 2700 },
-    { x0: 3200, x1: 6400, y0: 0, y1: 2700 },
-    { x0: 6400, x1: 9600, y0: 0, y1: 2700 },
-    { x0: 0, x1: 3200, y0: 2700, y1: 5400 },
-    { x0: 3200, x1: 6400, y0: 2700, y1: 5400 },
-    { x0: 6400, x1: 9600, y0: 2700, y1: 5400 },
-  ];
   for (const sec of SECTORS) {
     const inSec = trees.filter((tr) => tr.x >= sec.x0 && tr.x < sec.x1 && tr.y >= sec.y0 && tr.y < sec.y1);
     if (inSec.length === 0) continue;
@@ -578,6 +799,155 @@ function buildMeshes(data) {
     }
   }
 
+  // --- Relief: gentle mounds where the ground was dead flat. ------------
+  // The ground plane itself stays flat: buildings sit on it at y=0 and
+  // Leo walks at y=0, so displacing it would bury both. Relief is low,
+  // wide, half-buried spheres in parks, peaks forest and beach dunes,
+  // plus solid foothill cones on the map's north/west verges (built in
+  // buildWorld as solids, so Leo can never clip into them). Mound
+  // heights are capped (parks <=1.2 m, dunes <=1.0 m, forest <=1.8 m).
+  // The mound list is returned as `moundList` (centre, radii, height)
+  // so player.js can sample the same ellipsoids and lift Leo's feet
+  // onto them instead of letting him sink (v5b terrain-following).
+  //
+  // Clearance helpers: a candidate spot must be clear of buildings
+  // (150 m spatial grid), roads, water and gameplay points. Rectangles
+  // are tested with a shared overlap check; points with a distance check.
+  const bGrid = new Map();
+  const BG = 150;
+  for (const b of buildings) {
+    const gx0 = Math.floor(b.x / BG);
+    const gx1 = Math.floor((b.x + b.w) / BG);
+    const gy0 = Math.floor(b.y / BG);
+    const gy1 = Math.floor((b.y + b.h) / BG);
+    for (let gx = gx0; gx <= gx1; gx += 1) {
+      for (let gy = gy0; gy <= gy1; gy += 1) {
+        const k = `${gx},${gy}`;
+        if (!bGrid.has(k)) bGrid.set(k, []);
+        bGrid.get(k).push(b);
+      }
+    }
+  }
+  // True when the circle (x, y, r+pad) overlaps the rect (rx, ry, rw, rh).
+  function circleHitsRect(x, y, r, pad, rx, ry, rw, rh) {
+    return x + r + pad > rx && x - r - pad < rx + rw && y + r + pad > ry && y - r - pad < ry + rh;
+  }
+  function clearOfBuildings(x, y, r) {
+    const gx = Math.floor(x / BG);
+    const gy = Math.floor(y / BG);
+    for (let ix = gx - 1; ix <= gx + 1; ix += 1) {
+      for (let iy = gy - 1; iy <= gy + 1; iy += 1) {
+        const cell = bGrid.get(`${ix},${iy}`);
+        if (!cell) continue;
+        for (const b of cell) {
+          if (circleHitsRect(x, y, r, 2, b.x, b.y, b.w, b.h)) return false;
+        }
+      }
+    }
+    return true;
+  }
+  function clearOfRoads(x, y, r, pad = 3) {
+    for (const rd of roads) {
+      if (circleHitsRect(x, y, r, pad, rd.x, rd.y, rd.w, rd.h)) return false;
+    }
+    return true;
+  }
+  function clearOfWater(x, y, r, pad = 2) {
+    for (const wr of WATER_RECTS) {
+      if (circleHitsRect(x, y, r, pad, wr.x, wr.y, wr.w, wr.h)) return false;
+    }
+    return true;
+  }
+  function clearOfPoints(x, y, r) {
+    const keepOut = [...STORY_MISSIONS, ...SIDE_QUEST_PLACES, ...SHOP_DEFS, ...ACTIVITY_SPOTS];
+    for (const pt of keepOut) {
+      if (Math.hypot(pt.x - x, pt.y - y) < r + 14) return false;
+    }
+    return true;
+  }
+  // All four clearance checks at once (roads take the caller's pad).
+  function clearForMound(x, y, r, roadPad) {
+    return clearOfRoads(x, y, r, roadPad)
+      && clearOfBuildings(x, y, r)
+      && clearOfPoints(x, y, r)
+      && clearOfWater(x, y, r);
+  }
+  const grassMounds = [];
+  const sandMounds = [];
+  // Pocket parks: two gentle mounds each, in the corners clear of the
+  // central plaza (the plaza occupies the middle third).
+  for (const p of parks || []) {
+    for (const [fx, fy] of [[0.22, 0.25], [0.78, 0.72]]) {
+      const mx = p.x + p.w * fx + (hash01(p.x, p.y + fx * 100) - 0.5) * p.w * 0.1;
+      const my = p.y + p.h * fy + (hash01(p.y, p.x + fy * 100) - 0.5) * p.h * 0.1;
+      const mr = 8 + hash01(p.x + fx * 50, p.y) * 10;
+      grassMounds.push({ x: mx, y: 0, z: my, sx: mr, sy: 0.6 + hash01(p.y, fx * 90) * 0.6, sz: mr });
+    }
+  }
+  // Peaks forest: rolling ground, well off every road and building.
+  let placed = 0;
+  for (let i = 0; i < 220 && placed < 26; i += 1) {
+    const mx = 120 + hash01(i, 7) * 9360;
+    const my = 90 + hash01(i, 21) * 1180;
+    const mr = 30 + hash01(i, 33) * 40;
+    if (!clearForMound(mx, my, mr, 6)) continue;
+    grassMounds.push({ x: mx, y: 0, z: my, sx: mr, sy: 1.0 + hash01(i, 55) * 0.8, sz: mr * (0.8 + hash01(i, 77) * 0.4) });
+    placed += 1;
+  }
+  const forestMounds = placed;
+  // Beach dunes: low sand rises along the shore strip, east of the last
+  // shore avenue and clear of the ring road and the palms.
+  placed = 0;
+  for (let i = 0; i < 120 && placed < 12; i += 1) {
+    const mx = 8900 + hash01(i, 91) * 240;
+    const my = 1500 + hash01(i, 101) * 3700;
+    const mr = 10 + hash01(i, 113) * 12;
+    if (!clearForMound(mx, my, mr, 4)) continue;
+    sandMounds.push({ x: mx, y: 0, z: my, sx: mr, sy: 0.6 + hash01(i, 127) * 0.4, sz: mr });
+    placed += 1;
+  }
+  const duneCount = placed;
+  const moundGeo = new THREE.SphereGeometry(1, 12, 8);
+  const grassMoundMesh = makeInstanced(moundGeo, grassMat(), grassMounds);
+  if (grassMoundMesh) meshes.push(grassMoundMesh);
+  const sandMoundMesh = makeInstanced(moundGeo, sandMat(), sandMounds);
+  if (sandMoundMesh) meshes.push(sandMoundMesh);
+  // Terrain sampling data for player.js: one flat entry per mound with
+  // the ellipsoid parameters (centre x/z, radii, peak height). The mesh
+  // is a unit sphere scaled (rx, h, rz) about y=0, so the surface height
+  // at (x, y) is h * sqrt(1 - dx^2 - dz^2) with dx, dz normalised.
+  const moundList = [
+    ...grassMounds.map((m) => ({ x: m.x, z: m.z, rx: m.sx, rz: m.sz, h: m.sy })),
+    ...sandMounds.map((m) => ({ x: m.x, z: m.z, rx: m.sx, rz: m.sz, h: m.sy })),
+  ];
+  // Peaks dirt patches: brown earth showing through the grass, 120 flat
+  // quads scattered through the mountain band, clear of the roads.
+  const dirtQuads = [];
+  placed = 0;
+  for (let i = 0; i < 400 && placed < 120; i += 1) {
+    const dx = 120 + hash01(i, 141) * 9360;
+    const dy = 90 + hash01(i, 153) * 1180;
+    const dw = 6 + hash01(i, 167) * 10;
+    const dh = 5 + hash01(i, 179) * 8;
+    if (!clearOfRoads(dx, dy, Math.max(dw, dh) / 2, 2)) continue;
+    if (!clearOfWater(dx, dy, Math.max(dw, dh) / 2)) continue;
+    dirtQuads.push(quad(dx - dw / 2, dy - dh / 2, dx + dw / 2, dy + dh / 2, 0.02));
+    placed += 1;
+  }
+  const dirtMesh = buildMergedMesh(dirtQuads, dirtMat());
+  if (dirtMesh) meshes.push(dirtMesh);
+
+  // Foothills: solid cones on the north/west verges (buildWorld), a
+  // closer hill range in front of the backdrop peaks. Rocky when tall,
+  // grassy when low; sunk 1 m so the base reads as planted, not floating.
+  const foothillGeo = new THREE.ConeGeometry(1, 1, 7);
+  for (const f of foothills || []) {
+    const m = new THREE.Mesh(foothillGeo, f.h >= 20 ? rockMat() : grassMat());
+    m.scale.set(f.r, f.h, f.r);
+    m.position.set(f.x, f.h / 2 - 1, f.y);
+    meshes.push(m);
+  }
+
   // Peaks: mountain cones + snow caps from MOUNTAIN_PEAKS (data.js).
   // v4.1: a real backdrop range NORTH of the map edge (centres y <= -600,
   // bases clear of every road) — 500-800 m peaks, hazed by the fog, never
@@ -606,6 +976,9 @@ function buildMeshes(data) {
   const rw = AIRPORT.runway;
   meshes.push(groundPlane(rw.w, rw.h, asphaltMat(), rw.x + rw.w / 2, rw.y + rw.h / 2, 0.04, true));
   meshes.push(groundPlane(rw.w * 0.9, 2, basic('#f8fafc', { transparent: true, opacity: 0.6 }), rw.x + rw.w / 2, rw.y + rw.h / 2, 0.05));
+  // Airport forecourt: a plaza patch in front of the terminal, south
+  // of the street that passes the terminal and clear of the runway.
+  meshes.push(groundPlane(70, 36, plazaMat(), AIRPORT.x + 420, AIRPORT.y + 142, 0.035, true));
   const terminal = new THREE.Mesh(unitBox, std('#94a3b8'));
   terminal.scale.set(60, 12, 30);
   terminal.position.set(AIRPORT.x + 420, 6, AIRPORT.y + 90);
@@ -817,7 +1190,15 @@ function buildMeshes(data) {
   for (const m of densityMeshes.trees) m.userData.fullCount = m.count;
   // The road graph is exposed so render.js can repaint the traffic lights
   // live (graph.lightStateAt) and Settings/tests can read the network.
-  return { meshes, densityMeshes, trafficLightData, lampCount, graph };
+  return {
+    meshes, densityMeshes, trafficLightData, lampCount, graph,
+    markings: { dashes: markingDashCount, zebras: zebraCount },
+    mounds: { grass: grassMounds.length, sand: sandMounds.length, forest: forestMounds, dunes: duneCount },
+    moundList,
+    dirtPatches: dirtQuads.length,
+    foothills: (foothills || []).length,
+    plazaPatches: (parks || []).length + 1,
+  };
 }
 
 export function buildWorld(rng) {
@@ -1309,6 +1690,47 @@ export function buildWorld(rng) {
   });
   const activitySpots = ACTIVITY_SPOTS.map((s) => ({ ...s, r: 6 }));
 
+  // ---- Foothills: real relief on the map's north/west verges ----------
+  // A closer hill range in front of the backdrop peaks (data.js
+  // MOUNTAIN_PEAKS): cones 12-30 m tall on the empty strips between the
+  // ring road and the map edge, where nothing else lives. Each cone is a
+  // solid (its bounding square goes into `solids`) so Leo can never walk
+  // into it and clip through the slope — the only relief in the game
+  // that is solid, and the only place the ground truly rises. A few
+  // pines stand at each foot, just outside the cone.
+  const foothills = [];
+  function foothillClear(cx, cy, r) {
+    // Inside the map with a 5 m margin.
+    if (cx - r < 5 || cy - r < 5 || cx + r > WORLD_WIDTH - 5 || cy + r > WORLD_HEIGHT - 5) return false;
+    // Clear of roads and water (3 m pad), buildings, and gameplay spots.
+    const rects = [...roads, ...WATER_RECTS];
+    for (const rc of rects) {
+      if (cx + r + 3 > rc.x && cx - r - 3 < rc.x + rc.w && cy + r + 3 > rc.y && cy - r - 3 < rc.y + rc.h) return false;
+    }
+    if (overlapsBuilding(cx - r, cy - r, 2 * r, 2 * r)) return false;
+    for (const k of keepOuts) if (Math.hypot(k.x - cx, k.y - cy) < r + k.r + 4) return false;
+    return true;
+  }
+  // Candidate spots: a row along the north verge (y ~15-40) every 550 m,
+  // and a column along the west verge (x ~15-40) every 650 m, jittered.
+  const foothillSpots = [];
+  for (let x = 300; x <= 9400; x += 550) foothillSpots.push([x + rng.range(-120, 120), 15 + rng.range(0, 25)]);
+  for (let y = 1700; y <= 5200; y += 650) foothillSpots.push([15 + rng.range(0, 25), y + rng.range(-120, 120)]);
+  for (const [fx, fy] of foothillSpots) {
+    const fr = 22 + rng.range(0, 14);
+    const fh = 12 + rng.range(0, 18);
+    if (!foothillClear(fx, fy, fr)) continue;
+    foothills.push({ x: fx, y: fy, r: fr, h: fh });
+    solids.push({ x: fx - fr, y: fy - fr, w: 2 * fr, h: 2 * fr });
+    for (let i = 0; i < 3; i += 1) {
+      const a = rng.range(0, Math.PI * 2);
+      trees.push({
+        x: fx + Math.cos(a) * fr * 1.05, y: fy + Math.sin(a) * fr * 1.05,
+        kind: 'pine', h: 4 + rng.range(0, 4), r: 2 + rng.range(0, 2),
+      });
+    }
+  }
+
   // Collision: a 150 m spatial hash over the solids, so a query only
   // checks the solids in the 3x3 cells around the point instead of all
   // ~3000 of them every frame.
@@ -1381,7 +1803,7 @@ export function buildWorld(rng) {
   }
 
   const world = {
-    buildings, roads, trees, parks, solids, gates, walls, shops, activitySpots, graph,
+    buildings, roads, trees, parks, foothills, solids, gates, walls, shops, activitySpots, graph,
     collides, collidesRect, barrierDistrictAt,
     randomRoadPoint, randomSidewalkPoint, nearestRoadPoint,
     safeHouse: safeHouseB,
@@ -1390,6 +1812,25 @@ export function buildWorld(rng) {
   world.meshes = built.meshes;
   world.densityMeshes = built.densityMeshes;
   world.trafficLightData = built.trafficLightData;
+  // Terrain height for player.js (v5b): the ground the hero stands on.
+  // Mounds are half-buried unit spheres scaled (rx, h, rz) about y=0,
+  // so the surface over a mound is the ellipsoid height
+  // h * sqrt(1 - dx^2 - dz^2); overlapping mounds take the tallest.
+  // Roads, sidewalks and plazas are flat by construction (mounds are
+  // placed clear of them), so this returns exactly 0 there.
+  world.moundList = built.moundList || [];
+  world.groundHeightAt = (x, y) => {
+    let top = 0;
+    for (const m of world.moundList) {
+      const dx = (x - m.x) / m.rx;
+      const dz = (y - m.z) / m.rz;
+      const q = dx * dx + dz * dz;
+      if (q >= 1) continue;
+      const h = m.h * Math.sqrt(1 - q);
+      if (h > top) top = h;
+    }
+    return top;
+  };
   // Graphics-quality hook (render.js applyGraphicsQuality calls this):
   // scale the instanced tree / lamp counts and hide the far neon signs.
   world.visualDensity = 1;
@@ -1406,8 +1847,8 @@ export function buildWorld(rng) {
       m.visible = i < Math.ceil(world.densityMeshes.signs.length * f);
     });
   };
-  // v4.1 stats for testers and the build report (render.js exposes these
-  // as window.__neonBay.worldStats).
+  // World stats for testers and the build report (render.js exposes
+  // these as window.__neonBay.worldStats).
   const treesByKind = {};
   for (const t of trees) treesByKind[t.kind] = (treesByKind[t.kind] || 0) + 1;
   const buildingsByKind = {};
@@ -1416,6 +1857,15 @@ export function buildWorld(rng) {
   for (const b of buildings) byDistrict[b.district] += 1;
   const roadsByType = { residential: 0, arterial: 0 };
   for (const r of roads) roadsByType[r.type === 'arterial' ? 'arterial' : 'residential'] += 1;
+  // Surface / relief tallies (from the mesh build, so they count what
+  // was actually drawn, not what was planned).
+  const reliefStats = {
+    markings: built.markings,
+    mounds: built.mounds,
+    dirtPatches: built.dirtPatches,
+    foothills: built.foothills,
+    plazaPatches: built.plazaPatches,
+  };
   world.stats = {
     buildings: buildings.length,
     buildingsByKind,
@@ -1440,6 +1890,7 @@ export function buildWorld(rng) {
     trafficLights: graph.trafficLights ? graph.trafficLights.length : 0,
     lamps: built.lampCount || 0,
     meshes: world.meshes.length,
+    ...reliefStats,
     scale: {
       leoUnits: LEO_HEIGHT_UNITS, leoMeters: 1.8,
       unitsPerMeter: UNITS_PER_METER,

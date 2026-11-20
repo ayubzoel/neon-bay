@@ -6,7 +6,7 @@
 // Only the drawing is 3D now: drawVehicle/drawVehicles build pooled
 // THREE groups (body + cabin + wheels, hull, fuselage + wings) via the
 // renderer's mesh pool. Meshes face +X; rotation.y = -angle (v1 heading).
-import { AIRPORT, DENSITY_LEVELS, DEFAULT_DENSITY, TRAFFIC_LIGHT_POLE_HEIGHT, VEHICLE_STATS, keybindFor } from './config.js';
+import { AIRPORT, AMBIENT_CROWD, DENSITY_LEVELS, DEFAULT_DENSITY, DRAW_FAR_METRES, FURNITURE_SECTORS, TRAFFIC_LIGHT_POLE_HEIGHT, VEHICLE_STATS, WORLD_HEIGHT, WORLD_WIDTH, keybindFor } from './config.js';
 import { activeCharacter, showMessage } from './state.js';
 import { districtAt, isWater } from './world.js';
 import { playSfx, playSfx3D, setEngine } from './audio.js';
@@ -88,19 +88,22 @@ function segTOf(seg, point) {
 /** Parked cars, traffic, boats at the pier and two planes at the airport. */
 // One moving AI car/bike on the graph, in its own lane, cruising 11-17
 // m/s (40-60 km/h). About one in six is a bike, and a few drive the
-// arterial's inner lane (placeOnGraph picks the lane).
-function makeTrafficCar(world, rng, district) {
-  const spot = placeOnGraph(world, rng, district);
-  const v = makeVehicle(rng.chance(0.15) ? 'bike' : 'car', spot.x, spot.y, 0, 'traffic');
-  v.seg = spot.seg;
-  v.segT = spot.segT;
-  v.segDir = spot.segDir;
-  v.lane = spot.lane;
+// arterial's inner lane (placeOnGraph picks the lane). `spot` is an
+// optional pre-picked placement ({seg, segT, segDir, lane, x, y} as
+// placeOnGraph returns) — the living-city balancer passes one near the
+// hero; without it the car is placed anywhere in the district, as in v4.
+function makeTrafficCar(world, rng, district, spot) {
+  const s = spot || placeOnGraph(world, rng, district);
+  const v = makeVehicle(rng.chance(0.15) ? 'bike' : 'car', s.x, s.y, 0, 'traffic');
+  v.seg = s.seg;
+  v.segT = s.segT;
+  v.segDir = s.segDir;
+  v.lane = s.lane;
   v.cruise = 11 + rng.range(0, 6);
-  const seg = world.graph.segments[spot.seg];
-  v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+  const seg = world.graph.segments[s.seg];
+  v.angle = Math.atan2((seg.by - seg.ay) * s.segDir, (seg.bx - seg.ax) * s.segDir);
   v.speed = v.cruise;
-  v.z = seg.za + (seg.zb - seg.za) * spot.segT;
+  v.z = seg.za + (seg.zb - seg.za) * s.segT;
   return v;
 }
 
@@ -109,9 +112,32 @@ export function spawnVehicles(state, world, rng) {
   // Parked + traffic counts follow the density setting (config.js
   // DENSITY_LEVELS); 'high' is the v4 default: 22 parked, 42 moving.
   const density = DENSITY_LEVELS[state.densityLevel] || DENSITY_LEVELS[DEFAULT_DENSITY];
+  // v5 living city: part of the downtown quota is born on the roads around
+  // the hero (he starts downtown), so there is traffic outside the door
+  // from the first frame — the rest scatter city-wide as in v4, so the
+  // totals do not change.
+  const hero = activeCharacter(state);
+  const nearParked = Math.min(AMBIENT_CROWD.initialNear.parked, density.parked[0]);
+  const closeParked = Math.min(AMBIENT_CROWD.initialClose.parked, nearParked);
+  const nearTraffic = Math.min(AMBIENT_CROWD.initialNear.traffic, density.traffic[0]);
+  const closeTraffic = Math.min(AMBIENT_CROWD.initialClose.traffic, nearTraffic);
   for (let d = 0; d < 3; d += 1) {
     for (let i = 0; i < density.parked[d]; i += 1) {
-      const spot = placeOnGraph(world, rng, d, true);
+      let spot = null;
+      if (d === 0 && i < nearParked) {
+        // The first couple park on the hero's own street, kerbside.
+        const lo = i < closeParked ? AMBIENT_CROWD.parkedCloseMin : AMBIENT_CROWD.parkedSpawnMin;
+        const hi = i < closeParked ? AMBIENT_CROWD.parkedCloseMax : AMBIENT_CROWD.parkedSpawnMax;
+        spot = lanePointNear(world.graph, rng, hero.x, hero.y, lo, hi, state, true);
+      }
+      if (!spot) spot = placeOnGraph(world, rng, d, true);
+      // Parked cars sit kerbside (outer lane): recompute the point for
+      // lane 0, since lanePointNear may have picked the inner lane.
+      if (d === 0 && i < nearParked) {
+        const seg0 = world.graph.segments[spot.seg];
+        const kerb = world.graph.lanePoint(seg0, spot.segT, spot.segDir, 0);
+        spot = { ...spot, lane: 0, x: kerb.x, y: kerb.y, z: kerb.z || 0 };
+      }
       const v = makeVehicle(rng.chance(0.25) ? 'bike' : 'car', spot.x, spot.y, 0, 'parked');
       const seg = world.graph.segments[spot.seg];
       v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
@@ -120,7 +146,15 @@ export function spawnVehicles(state, world, rng) {
   }
   for (let d = 0; d < 3; d += 1) {
     for (let i = 0; i < density.traffic[d]; i += 1) {
-      list.push(makeTrafficCar(world, rng, d));
+      if (d === 0 && i < nearTraffic) {
+        // The first couple cruise the hero's own street.
+        const lo = i < closeTraffic ? AMBIENT_CROWD.trafficCloseMin : AMBIENT_CROWD.trafficSpawnMin;
+        const hi = i < closeTraffic ? AMBIENT_CROWD.trafficCloseMax : AMBIENT_CROWD.trafficSpawnMax;
+        const spot = lanePointNear(world.graph, rng, hero.x, hero.y, lo, hi, state, false);
+        list.push(spot ? makeTrafficCar(world, rng, d, spot) : makeTrafficCar(world, rng, d));
+      } else {
+        list.push(makeTrafficCar(world, rng, d));
+      }
     }
   }
   // Boats in the open water along the east edge (x 9200-9600).
@@ -361,7 +395,201 @@ export function barrierMessage(state, district) {
   showMessage(state, t(district === 1 ? 'vehicle.barrierBeach' : 'vehicle.barrierPeaks'), 3);
 }
 
+// --- v5 living city: lane points near the hero --------------------------
+// A ground-level graph node within maxR of (x, y), by reservoir sampling
+// (one pass over the nodes, no array built).
+function randomGroundNodeNear(graph, rng, x, y, maxR) {
+  const r2 = maxR * maxR;
+  let count = 0;
+  let pick = null;
+  for (const n of graph.nodes) {
+    if (n.level !== 0) continue;
+    const dx = n.x - x;
+    const dy = n.y - y;
+    if (dx * dx + dy * dy > r2) continue;
+    count += 1;
+    if (rng.next() < 1 / count) pick = n;
+  }
+  return pick;
+}
+
+/** A lane placement in the band [minR, maxR] around (x, y), in the shape
+ * placeOnGraph returns ({seg, segT, segDir, lane, x, y, z}): pick a nearby
+ * intersection, take a random street off it, and sit in that street's
+ * right-hand lane for a random direction. Never spawns a car heading into
+ * a locked district gate, and with groundOnly it stays off viaduct decks
+ * (parked cars). Falls back to the nearest lane of a random point in the
+ * band; returns null only if the graph has nothing usable nearby. */
+function lanePointNear(graph, rng, x, y, minR, maxR, state, groundOnly = false) {
+  for (let tries = 0; tries < 12; tries += 1) {
+    const node = randomGroundNodeNear(graph, rng, x, y, maxR);
+    if (!node || !node.segs || node.segs.length === 0) break;
+    const seg = graph.segments[node.segs[Math.floor(rng.next() * node.segs.length)]];
+    if (!seg) continue;
+    if (groundOnly && seg.level !== 0) continue;
+    const dir = rng.next() < 0.5 ? 1 : -1;
+    const lane = seg.lanes === 4 && rng.next() < 0.3 ? 1 : 0;
+    const t = rng.range(0.08, 0.92);
+    const p = graph.lanePoint(seg, t, dir, lane);
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < minR * 0.7 || d > maxR) continue;
+    // Never spawn heading into a locked gate: the car would U-turn at the
+    // barrier instead of joining the flow.
+    const endId = dir >= 0 ? seg.b : seg.a;
+    const end = graph.nodes[endId];
+    if (end && end.gateDistrict !== null && !(state.unlocked && state.unlocked[end.gateDistrict])) continue;
+    return { seg: seg.id, segT: t, segDir: dir, lane, x: p.x, y: p.y, z: p.z || 0 };
+  }
+  const a = rng.range(0, Math.PI * 2);
+  const r = rng.range(minR, maxR);
+  const near = graph.nearestSegmentPoint(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  if (!near) return null;
+  const seg = near.seg;
+  if (groundOnly && seg.level !== 0) return null;
+  const dir = rng.next() < 0.5 ? 1 : -1;
+  const lane = seg.lanes === 4 && rng.next() < 0.3 ? 1 : 0;
+  const p = graph.lanePoint(seg, near.t, dir, lane);
+  return { seg: seg.id, segT: near.t, segDir: dir, lane, x: p.x, y: p.y, z: p.z || 0 };
+}
+
+// A lane spot near the hero with no other traffic car close by, so
+// recycled cars never spawn in a pile-up. A few tries, then give up for
+// this tick (the balancer runs again a second later).
+function laneSpotNear(state, graph, rng, x, y, minR, maxR, groundOnly) {
+  for (let tries = 0; tries < 6; tries += 1) {
+    const spot = lanePointNear(graph, rng, x, y, minR, maxR, state, groundOnly);
+    if (!spot) return null;
+    let clear = true;
+    for (const v of state.vehicles) {
+      if (v.owner !== 'traffic' || v.hp <= 0) continue;
+      if (Math.hypot(v.x - spot.x, v.y - spot.y) < AMBIENT_CROWD.trafficGap) { clear = false; break; }
+    }
+    if (clear) return spot;
+  }
+  return null;
+}
+
+/** The traffic balancer (v5 living city): once per sim-second, count the
+ * moving traffic cars and the parked road cars near the hero and, if the
+ * district target (config.js AMBIENT_CROWD) is not met, recycle the
+ * farthest ones — same-district first — onto lanes near the hero. A
+ * recycled traffic car keeps its cruise speed and rejoins the flow in its
+ * right-hand lane (the red-light logic in updateTraffic below is
+ * untouched: a recycled car still stops at red). Parked cars are recycled
+ * to ground-level lanes near the hero, in the outer (kerbside) lane.
+ * Totals never change: this only moves cars that already exist. The
+ * player's car, boats and planes are never touched. */
+function maintainTrafficCrowd(state, world, dt, rng) {
+  const cfg = AMBIENT_CROWD;
+  state.crowdTrafficCd = (state.crowdTrafficCd || 0) - dt;
+  if (state.crowdTrafficCd > 0) return;
+  state.crowdTrafficCd = cfg.checkSeconds;
+  const hero = activeCharacter(state);
+  const graph = world.graph;
+  const district = districtAt(hero.x, hero.y);
+  const target = cfg.targets[district] || cfg.targets[0];
+
+  // --- moving traffic ---
+  let count = 0;
+  const far = [];
+  for (const v of state.vehicles) {
+    if (v.owner !== 'traffic' || v.hp <= 0) continue;
+    const d = Math.hypot(v.x - hero.x, v.y - hero.y);
+    if (d <= cfg.trafficNear) count += 1;
+    else far.push({ v, d, same: districtAt(v.x, v.y) === district });
+  }
+  let need = target.traffic - count;
+  if (need > 0 && far.length > 0) {
+    far.sort((a, b) => (b.same - a.same) || (b.d - a.d));
+    const moves = Math.min(need, cfg.maxPerTick.traffic, far.length);
+    for (let i = 0; i < moves; i += 1) {
+      const v = far[i].v;
+      const spot = laneSpotNear(state, graph, rng, hero.x, hero.y, cfg.trafficSpawnMin, cfg.trafficSpawnMax, false);
+      if (!spot) continue;
+      const seg = graph.segments[spot.seg];
+      v.seg = spot.seg;
+      v.segT = spot.segT;
+      v.segDir = spot.segDir;
+      v.lane = spot.lane;
+      v.x = spot.x;
+      v.y = spot.y;
+      v.z = spot.z || 0;
+      v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+      if (!v.cruise) v.cruise = 11 + ((v.id * 37) % 60) / 10;
+      v.speed = v.cruise;
+      v.waitT = 0;
+    }
+  }
+  // Close top-up: if the road right around the hero is nearly empty,
+  // recycle ONE far car into the far side of the close band (90-140 m),
+  // so a car drives into view within seconds. Only below target — never
+  // on a busy street. Cars stay far out because they are big and obvious.
+  let close = 0;
+  for (const v of state.vehicles) {
+    if (v.owner !== 'traffic' || v.hp <= 0) continue;
+    if (Math.hypot(v.x - hero.x, v.y - hero.y) <= cfg.trafficCloseRadius) close += 1;
+  }
+  if (close < cfg.trafficCloseTarget) {
+    for (const entry of far) {
+      const v = entry.v;
+      if (Math.hypot(v.x - hero.x, v.y - hero.y) <= cfg.trafficNear) continue;
+      const spot = laneSpotNear(state, graph, rng, hero.x, hero.y, cfg.trafficCloseSpawnMin, cfg.trafficCloseSpawnMax, false);
+      if (!spot) break;
+      const seg = graph.segments[spot.seg];
+      v.seg = spot.seg;
+      v.segT = spot.segT;
+      v.segDir = spot.segDir;
+      v.lane = spot.lane;
+      v.x = spot.x;
+      v.y = spot.y;
+      v.z = spot.z || 0;
+      v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+      if (!v.cruise) v.cruise = 11 + ((v.id * 37) % 60) / 10;
+      v.speed = v.cruise;
+      v.waitT = 0;
+      break; // one per tick
+    }
+  }
+
+  // --- parked road cars (kerbside, outer lane) ---
+  const isParkedRoad = (v) => v.owner === 'parked' && (v.kind === 'car' || v.kind === 'bike');
+  let pCount = 0;
+  const pFar = [];
+  for (const v of state.vehicles) {
+    if (!isParkedRoad(v)) continue;
+    const d = Math.hypot(v.x - hero.x, v.y - hero.y);
+    if (d <= cfg.parkedNear) pCount += 1;
+    else pFar.push({ v, d, same: districtAt(v.x, v.y) === district });
+  }
+  const pNeed = target.parked - pCount;
+  if (pNeed > 0 && pFar.length > 0) {
+    pFar.sort((a, b) => (b.same - a.same) || (b.d - a.d));
+    const moves = Math.min(pNeed, cfg.maxPerTick.parked, pFar.length);
+    for (let i = 0; i < moves; i += 1) {
+      const v = pFar[i].v;
+      const spot = lanePointNear(graph, rng, hero.x, hero.y, cfg.parkedSpawnMin, cfg.parkedSpawnMax, state, true);
+      if (!spot) continue;
+      const seg = graph.segments[spot.seg];
+      // Kerbside = the OUTER lane: recompute the point for lane 0, since
+      // lanePointNear may have picked the inner lane on an arterial.
+      const kerb = graph.lanePoint(seg, spot.segT, spot.segDir, 0);
+      v.seg = spot.seg;
+      v.segT = spot.segT;
+      v.segDir = spot.segDir;
+      v.lane = 0; // outer lane = kerbside
+      v.x = kerb.x;
+      v.y = kerb.y;
+      v.z = kerb.z || 0;
+      v.angle = Math.atan2((seg.by - seg.ay) * spot.segDir, (seg.bx - seg.ax) * spot.segDir);
+      v.speed = 0;
+    }
+  }
+}
+
 function updateTraffic(state, world, dt, rng) {
+  // v5 living city: keep the roads around the hero busy (recycles far
+  // cars in, never adds any). Runs on its own 1 s throttle inside.
+  maintainTrafficCrowd(state, world, dt, rng);
   const graph = world.graph;
   // The traffic-light clock: every light's phase is a pure function of
   // this time, so the logic here and the lamps in drawRoadFurniture agree.
@@ -842,7 +1070,10 @@ function buildRoadFurniture(T, graph) {
   const heads = [];
   const lampSpots = []; // {nodeId, axis, color, x, y, z}
   const unitBox = new T.BoxGeometry(1, 1, 1);
-  const lampGeo = new T.SphereGeometry(0.16, 8, 6);
+  // v5 perf: fewer segments per lamp (6x4 = 48 tris instead of 8x6 = 96)
+  // — the same 0.32 m bulb at street distance, half the triangles on
+  // every one of the ~1800 lamps in the city.
+  const lampGeo = new T.SphereGeometry(0.16, 6, 4);
 
   for (const s of graph.segments) {
     if (s.level === 1) {
@@ -937,6 +1168,25 @@ function buildRoadFurniture(T, graph) {
     }
   }
 
+  // --- v5 perf: sector-split instancing ---------------------------------
+  // One InstancedMesh per kind per map sector (FURNITURE_SECTORS: 4 x 3
+  // sectors of 2400 x 1800 m), each with its own bounding sphere and
+  // frustumCulled = true, so the renderer only draws the sectors near
+  // the camera instead of the whole city's dashes (~120k tris) and lamps
+  // (~175k tris) every frame. three r149 has no
+  // InstancedMesh.computeBoundingSphere (it arrived in r156), so the
+  // sphere is computed by hand from the instance positions plus each
+  // instance's half-diagonal — a long deck slab extends far past its
+  // origin, and the sphere must cover it. Same approach as world.js
+  // makeInstanced (trees), just finer sectors.
+  const SECTOR_W = WORLD_WIDTH / FURNITURE_SECTORS.cols;
+  const SECTOR_H = WORLD_HEIGHT / FURNITURE_SECTORS.rows;
+  const SECTOR_N = FURNITURE_SECTORS.cols * FURNITURE_SECTORS.rows;
+  function sectorOf(x, z) {
+    const cx = Math.max(0, Math.min(FURNITURE_SECTORS.cols - 1, Math.floor(x / SECTOR_W)));
+    const cz = Math.max(0, Math.min(FURNITURE_SECTORS.rows - 1, Math.floor(z / SECTOR_H)));
+    return cz * FURNITURE_SECTORS.cols + cx;
+  }
   function instanced(list, geometry, material) {
     if (list.length === 0) return null;
     const mesh = new T.InstancedMesh(geometry, material, list.length);
@@ -944,8 +1194,31 @@ function buildRoadFurniture(T, graph) {
       mesh.setMatrixAt(i, _furnMatrix(tr.px, tr.py, tr.pz, tr.rx, tr.ry, tr.rz, tr.sx, tr.sy, tr.sz, T));
     });
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.frustumCulled = false;
+    const centre = new T.Vector3();
+    for (const tr of list) {
+      centre.x += tr.px;
+      centre.y += tr.py;
+      centre.z += tr.pz;
+    }
+    centre.divideScalar(Math.max(1, list.length));
+    let radius = 0;
+    for (const tr of list) {
+      const dx = tr.px - centre.x;
+      const dy = tr.py - centre.y;
+      const dz = tr.pz - centre.z;
+      const halfDiag = 0.5 * Math.hypot(tr.sx || 1, tr.sy || 1, tr.sz || 1);
+      radius = Math.max(radius, Math.sqrt(dx * dx + dy * dy + dz * dz) + halfDiag);
+    }
+    mesh.boundingSphere = new T.Sphere(centre, radius);
+    mesh.frustumCulled = true;
     return mesh;
+  }
+  // Bucket one transform list by sector; returns an array of meshes
+  // indexed by sector (null where the sector has no instances).
+  function sectored(list, geometry, material) {
+    const buckets = Array.from({ length: SECTOR_N }, () => []);
+    for (const tr of list) buckets[sectorOf(tr.px, tr.pz)].push(tr);
+    return buckets.map((b) => instanced(b, geometry, material));
   }
   const asphalt = new T.MeshStandardMaterial({ color: 0x2f333a, roughness: 0.95, metalness: 0 });
   const concrete = new T.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.9, metalness: 0 });
@@ -958,43 +1231,75 @@ function buildRoadFurniture(T, graph) {
   const yellowMat = new T.MeshBasicMaterial({ color: 0xfacc15 });
   const greenMat = new T.MeshBasicMaterial({ color: 0x22c55e });
 
-  // Group the lamp spots by approach (node + axis): each approach has one
-  // red, one yellow and one green instance, in three separate meshes.
-  const approaches = new Map();
+  // Group the lamp spots by POLE (unique position), then poles by
+  // approach (node + axis): the two poles on one axis share a phase, but
+  // each pole has its own three lamps. (v4 grouped by node+axis and the
+  // second pole's lamps overwrote the first's, so 2 of the 4 poles at
+  // every junction were never updated and showed all three lamps lit.)
+  const poleMap = new Map();
   for (const spot of lampSpots) {
-    const key = `${spot.nodeId}-${spot.axis}`;
-    if (!approaches.has(key)) approaches.set(key, { nodeId: spot.nodeId, axis: spot.axis, lamps: {} });
-    approaches.get(key).lamps[spot.color] = spot;
+    const pkey = `${spot.x},${spot.z}`;
+    if (!poleMap.has(pkey)) poleMap.set(pkey, { nodeId: spot.nodeId, axis: spot.axis, lamps: {} });
+    poleMap.get(pkey).lamps[spot.color] = spot;
+  }
+  const approaches = new Map();
+  for (const pole of poleMap.values()) {
+    const key = `${pole.nodeId}-${pole.axis}`;
+    if (!approaches.has(key)) approaches.set(key, { nodeId: pole.nodeId, axis: pole.axis, poles: [] });
+    approaches.get(key).poles.push(pole);
   }
   const redSpots = lampSpots.filter((s) => s.color === 'red');
   const yellowSpots = lampSpots.filter((s) => s.color === 'yellow');
   const greenSpots = lampSpots.filter((s) => s.color === 'green');
-  const redIdx = new Map(redSpots.map((s, i) => [`${s.nodeId}-${s.axis}`, i]));
-  const yellowIdx = new Map(yellowSpots.map((s, i) => [`${s.nodeId}-${s.axis}`, i]));
-  const greenIdx = new Map(greenSpots.map((s, i) => [`${s.nodeId}-${s.axis}`, i]));
+  // Per-sector lamp meshes, per colour. Each pole records which sector
+  // mesh and index its three lamps live in, so the per-frame update can
+  // touch exactly the lamps whose colour changed.
+  function lampMeshes(spots, mat) {
+    const buckets = Array.from({ length: SECTOR_N }, () => []);
+    const idx = new Map();
+    for (const s of spots) {
+      const si = sectorOf(s.x, s.z);
+      idx.set(`${s.x},${s.z}`, { si, i: buckets[si].length });
+      buckets[si].push({ px: s.x, py: s.y, pz: s.z, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1 });
+    }
+    return { meshes: buckets.map((b) => instanced(b, lampGeo, mat)), idx };
+  }
+  const lampRed = lampMeshes(redSpots, redMat);
+  const lampYellow = lampMeshes(yellowSpots, yellowMat);
+  const lampGreen = lampMeshes(greenSpots, greenMat);
   for (const a of approaches.values()) {
-    a.red = { i: redIdx.get(`${a.nodeId}-${a.axis}`), ...a.lamps.red };
-    a.yellow = { i: yellowIdx.get(`${a.nodeId}-${a.axis}`), ...a.lamps.yellow };
-    a.green = { i: greenIdx.get(`${a.nodeId}-${a.axis}`), ...a.lamps.green };
+    for (const pole of a.poles) {
+      for (const [color, table] of [['red', lampRed], ['yellow', lampYellow], ['green', lampGreen]]) {
+        const spot = pole.lamps[color];
+        const loc = table.idx.get(`${spot.x},${spot.z}`);
+        pole[color] = { mesh: table.meshes[loc.si], i: loc.i, x: spot.x, y: spot.y, z: spot.z };
+      }
+    }
+    // Last lit colour (null = never set): the per-frame update only
+    // touches approaches whose colour changed since the last frame.
+    a.color = null;
   }
 
   return {
     graph,
-    deck: instanced(slabs, unitBox, asphalt),
-    barrier: instanced(barriers, unitBox, concrete),
-    pillar: instanced(pillars, unitBox, pierMat),
-    median: instanced(medians, unitBox, medianMat),
-    dash: instanced(dashes, unitBox, dashMat),
-    pole: instanced(poles, unitBox, poleMat),
-    head: instanced(heads, unitBox, headMat),
-    lampRed: instanced(redSpots.map((s) => ({ px: s.x, py: s.y, pz: s.z, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1 })), lampGeo, redMat),
-    lampYellow: instanced(yellowSpots.map((s) => ({ px: s.x, py: s.y, pz: s.z, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1 })), lampGeo, yellowMat),
-    lampGreen: instanced(greenSpots.map((s) => ({ px: s.x, py: s.y, pz: s.z, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1 })), lampGeo, greenMat),
+    sectors: {
+      deck: sectored(slabs, unitBox, asphalt),
+      barrier: sectored(barriers, unitBox, concrete),
+      pillar: sectored(pillars, unitBox, pierMat),
+      median: sectored(medians, unitBox, medianMat),
+      dash: sectored(dashes, unitBox, dashMat),
+      pole: sectored(poles, unitBox, poleMat),
+      head: sectored(heads, unitBox, headMat),
+      lampRed: lampRed.meshes,
+      lampYellow: lampYellow.meshes,
+      lampGreen: lampGreen.meshes,
+    },
     approaches: [...approaches.values()],
     counts: {
       deckSlabs: slabs.length, barriers: barriers.length, pillars: pillars.length,
       medians: medians.length, dashes: dashes.length, poles: poles.length,
       lights: graph.trafficLights.length, approaches: approaches.size,
+      sectors: SECTOR_N,
     },
   };
 }
@@ -1007,52 +1312,103 @@ function drawRoadFurniture(pool, state, time) {
     _furn = buildRoadFurniture(T, graph);
     _furnGen += 1;
     _furn.gen = _furnGen;
-    // Exposed for automated tests (window.__neonBay.state): how much road
-    // furniture actually got built, and the pole height it was built with.
+  }
+  // Exposed for automated tests (window.__neonBay.state): how much road
+  // furniture actually got built, and the pole height it was built with.
+  // state is recreated on New Game while _furn (module cache) survives,
+  // so (re)attach the handle whenever this state object lacks it.
+  if (!state.roadFurniture) {
     state.roadFurniture = { counts: _furn.counts, poleHeight: TRAFFIC_LIGHT_POLE_HEIGHT };
   }
   const f = _furn;
   const gen = f.gen || 0;
-  for (const [key, mesh] of [['deck', f.deck], ['barrier', f.barrier], ['pillar', f.pillar], ['median', f.median], ['dash', f.dash], ['pole', f.pole], ['head', f.head], ['lampRed', f.lampRed], ['lampYellow', f.lampYellow], ['lampGreen', f.lampGreen]]) {
-    if (!mesh) continue;
-    pool.get(`furn-${gen}-${key}`, () => mesh);
+  // One pool.get per sector mesh (a Map lookup). The meshes carry their
+  // own bounding spheres with frustumCulled = true, so the renderer only
+  // draws the sectors near the camera — the dashes and lamps of the far
+  // side of the city never reach the GPU.
+  const nSec = FURNITURE_SECTORS.cols * FURNITURE_SECTORS.rows;
+  const kinds = ['deck', 'barrier', 'pillar', 'median', 'dash', 'pole', 'head', 'lampRed', 'lampYellow', 'lampGreen'];
+  for (let si = 0; si < nSec; si += 1) {
+    for (const key of kinds) {
+      const mesh = f.sectors[key][si];
+      if (!mesh) continue;
+      pool.get(`furn-${gen}-s${si}-${key}`, () => mesh);
+    }
   }
   // Traffic-light lamps: light the lamp that matches the phase, hide the
   // other two (scale 0). The phase comes from the same clock as the
-  // traffic logic, so a car that stops at red sees a red lamp.
+  // traffic logic, so a car that stops at red sees a red lamp. Only
+  // approaches whose colour CHANGED since the last frame are touched —
+  // a phase flips ~4x per 30 s per light, so this is a handful of
+  // setMatrixAt calls per frame instead of 1824, and only the sector
+  // meshes that changed get their instance buffer re-uploaded.
   const t = state.trafficTime || 0;
   const zero = new T.Matrix4().makeScale(0, 0, 0);
   const one = new T.Matrix4();
-  function setLamp(mesh, entry, on) {
-    if (!mesh || entry.i === undefined) return;
+  const dirty = new Set();
+  function setLamp(entry, on) {
+    if (!entry || !entry.mesh || entry.i === undefined) return;
     if (on) {
       one.makeTranslation(entry.x, entry.y, entry.z);
-      mesh.setMatrixAt(entry.i, one);
+      entry.mesh.setMatrixAt(entry.i, one);
     } else {
-      mesh.setMatrixAt(entry.i, zero);
+      entry.mesh.setMatrixAt(entry.i, zero);
     }
+    dirty.add(entry.mesh);
   }
-  let dirty = false;
   for (const a of f.approaches) {
     const st = graph.lightStateAt(a.nodeId, t);
     const color = a.axis === 'ns' ? st.ns : st.ew;
-    setLamp(f.lampRed, a.red, color === 'red');
-    setLamp(f.lampYellow, a.yellow, color === 'yellow');
-    setLamp(f.lampGreen, a.green, color === 'green');
-    dirty = true;
+    if (color === a.color) continue;
+    a.color = color;
+    // Both poles on this axis show the same colour.
+    for (const pole of a.poles) {
+      setLamp(pole.red, color === 'red');
+      setLamp(pole.yellow, color === 'yellow');
+      setLamp(pole.green, color === 'green');
+    }
   }
-  if (dirty) {
-    if (f.lampRed) f.lampRed.instanceMatrix.needsUpdate = true;
-    if (f.lampYellow) f.lampYellow.instanceMatrix.needsUpdate = true;
-    if (f.lampGreen) f.lampGreen.instanceMatrix.needsUpdate = true;
+  for (const mesh of dirty) mesh.instanceMatrix.needsUpdate = true;
+  // Debug read-back for tests: for the first few approaches, which lamp
+  // is actually lit in the instance buffer vs the logical phase colour.
+  // A lit lamp's matrix is a translation (element 0 = 1); a hidden one
+  // is a zero scale (element 0 = 0). Catches a wrong sector/index
+  // mapping: exactly one of red/yellow/green must read lit, and it must
+  // match a.color.
+  const sample = [];
+  for (let k = 0; k < Math.min(4, f.approaches.length); k += 1) {
+    const a = f.approaches[k];
+    const pole = a.poles[0];
+    const lit = {};
+    for (const color of ['red', 'yellow', 'green']) {
+      const e = pole[color];
+      lit[color] = !!e.mesh && e.mesh.instanceMatrix.array[e.i * 16] === 1;
+    }
+    sample.push({ nodeId: a.nodeId, axis: a.axis, color: a.color, lit });
   }
+  state.roadFurniture.lampSample = sample;
   void time;
 }
 
 export function drawVehicles(pool, state, time) {
   drawRoadFurniture(pool, state, time);
+  // v5 perf: vehicles farther than ~250 m from the camera focus (+ the
+  // follow distance) are not drawn — pool.get is skipped, so the pool
+  // drops their mesh at endFrame and it is rebuilt when they come near.
+  // 250 m is safely beyond the visible range at every zoom level, and
+  // the player's own car is always drawn.
+  const cam = state.camera || null;
+  const cut = cam ? DRAW_FAR_METRES + (cam.dist || 14) : Infinity;
+  const cut2 = cut * cut;
+  const camX = cam ? cam.x : 0;
+  const camY = cam ? cam.y : 0;
   for (const v of state.vehicles) {
     if (state.playerVehicle === v) continue;
+    if (cam) {
+      const dx = v.x - camX;
+      const dy = v.y - camY;
+      if (dx * dx + dy * dy > cut2) continue;
+    }
     drawVehicle(pool, v, time);
   }
   if (state.playerVehicle) drawVehicle(pool, state.playerVehicle, time);

@@ -103,7 +103,11 @@ export function createGameState(seed) {
     season: 'summer',
     rain: 0,
     money: PLAYER_START_MONEY,
-    hero: makeHero(700, 1750),
+    // v5 spawn: Leo starts ON street 1700 (x 495, the road by the safe
+    // house) — the v4 default (700, 1750) was inside a building solid.
+    // validateHeroSpawn() (player.js) still re-checks this at New Game /
+    // Continue / respawn, so a future map change can never strand him.
+    hero: makeHero(495, 1700),
     weapons,
     weapon: 'pistol',
     // v4 backpack: six slots (one per weapon kind), all of v3's weapons fit.
@@ -137,7 +141,7 @@ export function createGameState(seed) {
     message: '',
     messageTimer: 0,
     objective: t('msg.objectiveStart'),
-    camera: { x: 700, y: 1750, yaw: 0, pitch: CAMERA_PITCH_DEFAULT, dist: CAMERA_DIST_DEFAULT },
+    camera: { x: 495, y: 1700, yaw: 0, pitch: CAMERA_PITCH_DEFAULT, dist: CAMERA_DIST_DEFAULT },
     muted: false,
     elapsed: 0,
   };

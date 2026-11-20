@@ -115,15 +115,19 @@ function skyGradientTexture(key, stops) {
 const SKY_GRADIENTS = {
   day: null, dusk: null, night: null, rain: null,
 };
+// Gradient stops per sky state, top (zenith) to bottom (horizon glow).
+// v5b rewrite: the table lives at module level instead of being rebuilt
+// inside the function, and day/dusk are the softer v5 ramps (deeper blue
+// zenith, warm cream at the horizon) rather than the flat v4 ones.
+const SKY_GRADIENT_STOPS = {
+  day: [[0, '#2f6da3'], [0.4, '#79b8dd'], [0.72, '#cfe8f5'], [1, '#f6ead0']],
+  dusk: [[0, '#33264a'], [0.45, '#e08a70'], [0.75, '#f7c873'], [1, '#ffe8b0']],
+  night: [[0, '#02040a'], [0.5, '#0b1026'], [0.8, '#1a2340'], [1, '#232c4d']],
+  rain: [[0, '#3d4a55'], [0.5, '#5b6b7a'], [0.8, '#7a8a94'], [1, '#93a3ab']],
+};
 function skyGradient(which) {
   if (!SKY_GRADIENTS[which]) {
-    const stops = {
-      day: [[0, '#3f7fb8'], [0.45, '#87ceeb'], [0.75, '#cfe8f5'], [1, '#e8f3f8']],
-      dusk: [[0, '#3a2a4a'], [0.45, '#e8907c'], [0.75, '#f7c873'], [1, '#ffe8b0']],
-      night: [[0, '#02040a'], [0.5, '#0b1026'], [0.8, '#1a2340'], [1, '#232c4d']],
-      rain: [[0, '#3d4a55'], [0.5, '#5b6b7a'], [0.8, '#7a8a94'], [1, '#93a3ab']],
-    }[which];
-    SKY_GRADIENTS[which] = skyGradientTexture(which, stops);
+    SKY_GRADIENTS[which] = skyGradientTexture(which, SKY_GRADIENT_STOPS[which]);
   }
   return SKY_GRADIENTS[which];
 }
@@ -295,16 +299,23 @@ export function createWeather(scene) {
     const fz = state && state.camera ? state.camera.y || 0 : 0;
     if (elev > 0) {
       sun.position.set(fx + Math.cos(sunAngle) * 900, 120 + elev * 700, fz + 320);
-      sun.intensity = 1.15 - darkness * 0.9;
-      // Warm at dawn/dusk, white at noon.
+      // Softer noon sun than v4 (peak 1.05, was 1.15): gentler contrast,
+      // with the hemisphere light carrying more of the fill so shadows
+      // read soft instead of hard. Fog near/far stay owned by render.js
+      // quality levels; weather.js only drives fog COLOUR (via the sky).
+      // `darkness` fades the sun out toward dusk; `warm` tints it amber
+      // low in the sky and white at noon.
       const warm = Math.max(0, 1 - elev * 2.2);
+      sun.intensity = 1.05 - darkness * 0.85;
       sun.color.setRGB(1, 1 - warm * 0.25, 1 - warm * 0.45);
     } else {
       sun.position.set(fx - 300, 500, fz - 200);
       sun.intensity = 0.3; // moonlight: a touch stronger so the neon city reads
       sun.color.setHex(0x8ea2c8);
     }
-    hemi.intensity = 0.95 - darkness * 0.55;
+    // Hemisphere fill slightly stronger than v4 (1.0 base, was 0.95) to
+    // match the softer sun; it still fades with darkness at night.
+    hemi.intensity = 1.0 - darkness * 0.55;
     // Hemisphere colours follow the same palette as the sky: warm at dusk,
     // deep blue at night, grey in the rain.
     const pal = (rainIntensity > 0.4) ? 'rain'

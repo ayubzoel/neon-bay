@@ -162,6 +162,89 @@ export const DENSITY_LEVELS = {
 };
 export const DEFAULT_DENSITY = 'high';
 
+// --- v5 living city (Builder B): the streets around the player ----------
+// v4 spreads its 140 peds / 42 traffic cars evenly over the whole
+// 9600x5400 map, so the spawn point (700, 1750) measured 0 peds and 0
+// cars within 100 m — an empty city. The totals stay exactly as v4
+// (DENSITY_LEVELS above, so applyDensity still lands on 63/140 peds and
+// 21/42 traffic); what changes is WHERE they are: a share of each
+// district's quota is born near the hero at New Game, and a slow
+// balancer (once per sim-second, a few entities per tick) recycles the
+// farthest ambient peds / traffic / parked cars back into a band around
+// the hero, same district first. The player always sees a busy street;
+// the city never renders hundreds at once.
+// Radii are metres. Spawn bands start outside the hero's immediate view
+// (no pop-in on screen) and inside the near radius. Targets are per
+// district [downtown, beach, peaks]: downtown is the busiest, the peaks
+// the quietest.
+export const AMBIENT_CROWD = {
+  checkSeconds: 1,
+  pedNear: 250,
+  pedSpawnMin: 45,
+  pedSpawnMax: 240,
+  trafficNear: 300,
+  trafficSpawnMin: 70,
+  trafficSpawnMax: 280,
+  parkedNear: 150,
+  parkedSpawnMin: 30,
+  parkedSpawnMax: 140,
+  // How many peds / moving cars / parked cars should be near the hero,
+  // per district [downtown, beach, peaks].
+  targets: [
+    { peds: 14, traffic: 9, parked: 4 },
+    { peds: 9, traffic: 6, parked: 3 },
+    { peds: 6, traffic: 4, parked: 2 },
+  ],
+  // Cap on recycled entities per check, per kind — a trickle, not a flood.
+  maxPerTick: { peds: 4, traffic: 3, parked: 2 },
+  // How many of the downtown quota are born near the hero at New Game
+  // (the rest scatter city-wide as in v4). The hero starts downtown.
+  initialNear: { peds: 12, traffic: 6, parked: 4 },
+  // Of the initial-near quota, this many are born in the CLOSE band below
+  // — on the very street the hero starts on, so the first thing the
+  // player sees is people walking and cars passing, not an empty road.
+  // The close band is ALSO topped up by the balancer (below), but only
+  // while the near field is nearly empty and only at the FAR side of the
+  // band, so nothing pops into view in the middle of a busy street.
+  initialClose: { peds: 5, traffic: 2, parked: 2 },
+  pedCloseMin: 25,
+  pedCloseMax: 110,
+  trafficCloseMin: 45,
+  trafficCloseMax: 140,
+  parkedCloseMin: 30,
+  parkedCloseMax: 90,
+  // Balancer close top-up: keep at least this many peds within 120 m and
+  // cars within 150 m of the hero, recycling at most 1 of each per tick
+  // into the far side of the close band (peds 45-95 m, cars 90-140 m).
+  // Pedestrians are small so their band starts closer; cars are big, so
+  // theirs stays near the edge of view and drives in within seconds.
+  pedCloseRadius: 120,
+  pedCloseTarget: 4,
+  pedCloseSpawnMin: 45,
+  pedCloseSpawnMax: 95,
+  trafficCloseRadius: 150,
+  trafficCloseTarget: 2,
+  trafficCloseSpawnMin: 90,
+  trafficCloseSpawnMax: 140,
+  // Minimum gap between a recycled traffic car and any other traffic car.
+  trafficGap: 12,
+};
+
+// --- v5 perf (Builder B, from Builder A's measurement) ------------------
+// Road furniture (vehicles.js) is split into a grid of sectors, one
+// InstancedMesh per kind per sector, each with its own bounding sphere
+// and frustumCulled = true — the renderer then only draws the sectors
+// near the camera instead of the whole city's dashes (~120k tris) and
+// traffic-light lamps (~175k tris) every frame. The same grid idea the
+// trees use (world.js), just finer: 4 x 3 sectors of 2400 x 1800 m.
+// DRAW_FAR_METRES: pedestrians and vehicles farther than this from the
+// camera focus (+ the camera's follow distance) are not drawn at all
+// that frame — the mesh pool drops them, and they are rebuilt when they
+// come near again. 250 m is safely beyond the visible range at every
+// zoom level the game offers.
+export const FURNITURE_SECTORS = { cols: 4, rows: 3 };
+export const DRAW_FAR_METRES = 250;
+
 // --- v4 default PC keybinds (Settings: display + rebind) ----------------
 // The single source of truth for what each key does. Every entry below is
 // a key the game actually reads: movement/run/confirm/pause live in

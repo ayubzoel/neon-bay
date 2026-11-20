@@ -8,7 +8,7 @@
 // the path turns onto a new street. Nobody cuts through blocks, parks or
 // buildings, and nobody wanders at random. Stationary NPCs (givers,
 // shopkeepers) never move. Fleeing pedestrians run along the sidewalks too.
-import { DENSITY_LEVELS, DEFAULT_DENSITY } from './config.js';
+import { AMBIENT_CROWD, DENSITY_LEVELS, DEFAULT_DENSITY, DRAW_FAR_METRES } from './config.js';
 import { DIALOGUE_GREETINGS, DIALOGUE_TIPS, MAYA_LINES, NPC_NAMES } from './data.js';
 import { addStrings, t } from './i18n.js';
 import { activeCharacter, addMoney, addWanted } from './state.js';
@@ -59,8 +59,24 @@ export function spawnNpcs(state, world, rng) {
   // Crowd size follows the density setting (config.js DENSITY_LEVELS);
   // 'high' is the v4 default: 85 downtown, 32 beach, 23 peaks.
   const density = DENSITY_LEVELS[state.densityLevel] || DENSITY_LEVELS[DEFAULT_DENSITY];
+  // v5 living city: part of the downtown quota is born on the sidewalks
+  // around the hero (he starts downtown at the safe house), so the street
+  // outside the door is busy from the first frame instead of empty — the
+  // rest scatter city-wide exactly as in v4, so the totals do not change.
+  const hero = activeCharacter(state);
+  const near0 = Math.min(AMBIENT_CROWD.initialNear.peds, density.peds[0]);
+  const close0 = Math.min(AMBIENT_CROWD.initialClose.peds, near0);
   for (let i = 0; i < density.peds[0]; i += 1) {
-    const p = world.randomSidewalkPoint(0);
+    let p;
+    if (i < close0) {
+      // On the hero's own street: the first thing the player sees is
+      // people walking past, not an empty road.
+      p = sidewalkPointNear(world.graph, rng, hero.x, hero.y, AMBIENT_CROWD.pedCloseMin, AMBIENT_CROWD.pedCloseMax);
+    } else if (i < near0) {
+      p = sidewalkPointNear(world.graph, rng, hero.x, hero.y, AMBIENT_CROWD.pedSpawnMin, AMBIENT_CROWD.pedSpawnMax);
+    } else {
+      p = world.randomSidewalkPoint(0);
+    }
     list.push(makePed(rng, p.x, p.y, p.z || 0));
   }
   for (let i = 0; i < density.peds[1]; i += 1) {
@@ -92,6 +108,120 @@ export function spawnNpcs(state, world, rng) {
     hair: 'long', state: 'idle', hp: 100,
   });
   state.npcs = list;
+}
+
+// --- v5 living city: sidewalk points near the hero ----------------------
+// Pick a ground-level graph node within maxR of (x, y) by reservoir
+// sampling (one pass over the nodes, no array built — the graph has
+// thousands of nodes and this runs a few times a second at most).
+function randomGroundNodeNear(graph, rng, x, y, maxR) {
+  const r2 = maxR * maxR;
+  let count = 0;
+  let pick = null;
+  for (const n of graph.nodes) {
+    if (n.level !== 0) continue;
+    const dx = n.x - x;
+    const dy = n.y - y;
+    if (dx * dx + dy * dy > r2) continue;
+    count += 1;
+    if (rng.next() < 1 / count) pick = n;
+  }
+  return pick;
+}
+
+/** A sidewalk point in the band [minR, maxR] around (x, y): pick a nearby
+ * intersection, take a random street off it, and stand on that street's
+ * sidewalk. Falls back to the nearest sidewalk of a random point in the
+ * band, so it always returns a real sidewalk — never a building, a park,
+ * or the middle of a road. */
+export function sidewalkPointNear(graph, rng, x, y, minR, maxR) {
+  for (let tries = 0; tries < 10; tries += 1) {
+    const node = randomGroundNodeNear(graph, rng, x, y, maxR);
+    if (!node || !node.segs || node.segs.length === 0) break;
+    const seg = graph.segments[node.segs[Math.floor(rng.next() * node.segs.length)]];
+    if (!seg || (seg.level !== 0 && !seg.walkable)) continue;
+    const p = graph.sidewalkPoint(seg, rng.range(0.1, 0.9), rng.next() < 0.5 ? 1 : -1);
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d >= minR * 0.5 && d <= maxR) return p;
+  }
+  const a = rng.range(0, Math.PI * 2);
+  const r = rng.range(minR, maxR);
+  return graph.nearestSidewalkPoint(x + Math.cos(a) * r, y + Math.sin(a) * r);
+}
+
+/** The pedestrian balancer (v5 living city): once per sim-second, count
+ * the walking peds near the hero and, if the district target
+ * (config.js AMBIENT_CROWD) is not met, recycle the farthest peds —
+ * same-district ones first, so the beach and peaks keep their own crowds
+ * — onto sidewalks near the hero. A recycled ped drops its old path and
+ * picks a new one where it lands, so it walks on like it always lived
+ * there. Totals never change: this only moves peds that already exist.
+ * Stationary NPCs (givers, shopkeepers, Maya) are never touched. */
+export function maintainPedCrowd(state, world, dt, rng) {
+  const cfg = AMBIENT_CROWD;
+  state.crowdPedCd = (state.crowdPedCd || 0) - dt;
+  if (state.crowdPedCd > 0) return;
+  state.crowdPedCd = cfg.checkSeconds;
+  const hero = activeCharacter(state);
+  const district = districtAt(hero.x, hero.y);
+  const target = (cfg.targets[district] || cfg.targets[0]).peds;
+  let count = 0;
+  const far = [];
+  for (const n of state.npcs) {
+    if (n.kind !== 'ped') continue;
+    const d = Math.hypot(n.x - hero.x, n.y - hero.y);
+    if (d <= cfg.pedNear) count += 1;
+    else far.push({ n, d, same: districtAt(n.x, n.y) === district });
+  }
+  const need = target - count;
+  if (need > 0 && far.length > 0) {
+    // Same-district peds first (keep the other districts populated), then
+    // farthest first within each group.
+    far.sort((a, b) => (b.same - a.same) || (b.d - a.d));
+    const moves = Math.min(need, cfg.maxPerTick.peds, far.length);
+    for (let i = 0; i < moves; i += 1) {
+      const ped = far[i].n;
+      const p = sidewalkPointNear(world.graph, rng, hero.x, hero.y, cfg.pedSpawnMin, cfg.pedSpawnMax);
+      if (!p) continue;
+      ped.x = p.x;
+      ped.y = p.y;
+      ped.z = p.z || 0;
+      ped.path = null;
+      ped.pathIdx = 0;
+      ped.state = 'walk';
+      ped.waitTimer = rng.range(0, 2);
+      ped.stuckTimer = 0;
+    }
+  }
+  // Close top-up: if the near field is nearly empty, recycle ONE far ped
+  // into the far side of the close band, so the street right around the
+  // hero never goes quiet while the ring refills. Only when the count
+  // within 120 m is below target — never on a busy street.
+  let close = 0;
+  for (const n of state.npcs) {
+    if (n.kind !== 'ped') continue;
+    if (Math.hypot(n.x - hero.x, n.y - hero.y) <= cfg.pedCloseRadius) close += 1;
+  }
+  if (close < cfg.pedCloseTarget) {
+    // Reuse the far list (same-district first, farthest first); the main
+    // top-up above may have already moved some of them — skip any that
+    // already landed near the hero.
+    for (const entry of far) {
+      const ped = entry.n;
+      if (Math.hypot(ped.x - hero.x, ped.y - hero.y) <= cfg.pedNear) continue;
+      const p = sidewalkPointNear(world.graph, rng, hero.x, hero.y, cfg.pedCloseSpawnMin, cfg.pedCloseSpawnMax);
+      if (!p) break;
+      ped.x = p.x;
+      ped.y = p.y;
+      ped.z = p.z || 0;
+      ped.path = null;
+      ped.pathIdx = 0;
+      ped.state = 'walk';
+      ped.waitTimer = rng.range(0, 2);
+      ped.stuckTimer = 0;
+      break; // one per tick
+    }
+  }
 }
 
 function fallbackRng() {
@@ -249,6 +379,9 @@ function followPath(state, world, npc, dt, speed) {
 }
 
 export function updateNpcs(state, world, dt, rng) {
+  // v5 living city: keep the streets around the hero populated (recycles
+  // far peds in, never adds any). Runs on its own 1 s throttle inside.
+  maintainPedCrowd(state, world, dt, rng);
   const hero = activeCharacter(state);
   for (const npc of state.npcs) {
     if (npc.kind !== 'ped') continue;
@@ -411,7 +544,22 @@ export function drawNpcs(pool, state, time) {
     return;
   }
   const T = three();
+  // v5 perf: pedestrians farther than ~250 m from the camera focus (+ the
+  // follow distance) are not drawn — pool.get (and the per-frame shirt
+  // material swap and limb animation) is skipped, so the pool drops
+  // their mesh at endFrame and it is rebuilt when they come near again.
+  // 250 m is safely beyond the visible range at every zoom level.
+  const cam = state.camera || null;
+  const cut = cam ? DRAW_FAR_METRES + (cam.dist || 14) : Infinity;
+  const cut2 = cut * cut;
+  const camX = cam ? cam.x : 0;
+  const camY = cam ? cam.y : 0;
   state.npcs.forEach((npc, i) => {
+    if (cam) {
+      const dx = npc.x - camX;
+      const dy = npc.y - camY;
+      if (dx * dx + dy * dy > cut2) return;
+    }
     const mesh = pool.get(`npc-${i}`, () => buildPedFigure(T, npc));
     mesh.position.set(npc.x, npc.z || 0, npc.y);
     mesh.rotation.y = -npc.angle;
