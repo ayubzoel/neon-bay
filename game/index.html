@@ -33,9 +33,36 @@
   .keys b { color: #e2e8f0; }
   #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(20, 25, 38, 0.92); color: #fde68a; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 18px; font-weight: 700; z-index: 15; pointer-events: none; opacity: 0; transition: opacity 0.2s; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
-  /* HUD map button: under the minimap, top-right. */
-  #btnMap { position: fixed; right: 14px; top: 172px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #fde68a; background: rgba(20,25,38,0.88); border: 1px solid #f59e0b; border-radius: 10px; cursor: pointer; }
-  #btnMap:hover { background: rgba(245,158,11,0.35); }
+  /* HUD backpack button: under the map button, top-right. */
+  #btnBackpack { position: fixed; right: 14px; top: 218px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #fde68a; background: rgba(20,25,38,0.88); border: 1px solid #f59e0b; border-radius: 10px; cursor: pointer; }
+  #btnBackpack:hover { background: rgba(245,158,11,0.35); }
+  /* HUD mute + settings buttons (v4 audio/settings): same column. */
+  #btnMute { position: fixed; right: 14px; top: 276px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #e2e8f0; background: rgba(20,25,38,0.88); border: 1px solid #64748b; border-radius: 10px; cursor: pointer; }
+  #btnMute:hover { background: rgba(100,116,139,0.4); }
+  #btnSettingsHud { position: fixed; right: 14px; top: 334px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #e2e8f0; background: rgba(20,25,38,0.88); border: 1px solid #64748b; border-radius: 10px; cursor: pointer; }
+  #btnSettingsHud:hover { background: rgba(100,116,139,0.4); }
+  /* Settings panel rows (v4). */
+  .settings-section { margin: 16px 0 6px; font-size: 15px; letter-spacing: 1px; color: #f59e0b; text-transform: uppercase; }
+  .settings-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid #263048; flex-wrap: wrap; }
+  .settings-label { font-weight: 600; }
+  .settings-control { display: inline-flex; align-items: center; gap: 8px; }
+  .settings-control input[type="range"] { width: 140px; }
+  .settings-value { min-width: 44px; text-align: right; color: #94a3b8; font-size: 13px; }
+  .settings-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn.small { width: auto; margin: 2px 0; padding: 7px 12px; font-size: 14px; display: inline-block; }
+  .keybind-btn { min-width: 90px; }
+  .keybind-btn.capturing { background: #f59e0b; color: #0b0e14; }
+  .settings-note { color: #94a3b8; font-size: 13px; }
+  .settings-slot-row .desc { color: #94a3b8; font-size: 13px; }
+  select { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 7px 10px; font-size: 14px; }
+  /* Touch control sizes (v4 Settings): scale the stick + buttons. */
+  body.touch-small #stick { transform: scale(0.85); transform-origin: left bottom; }
+  body.touch-small .tbtn { transform: scale(0.85); }
+  body.touch-large #stick { transform: scale(1.2); transform-origin: left bottom; }
+  body.touch-large .tbtn { transform: scale(1.2); }
+  /* Backpack rows: the equipped weapon reads as gold. */
+  .backpack-active { background: rgba(253, 224, 71, 0.12); border-radius: 8px; }
+  #backpackHint { color: #94a3b8; font-size: 13px; }
   /* Full-screen interactive map (DOM panel over the frozen game). */
   #mapPanel { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: rgba(5,8,16,0.97); color: #eef1f5; padding: 12px; box-sizing: border-box; }
   #mapPanel.hidden { display: none; }
@@ -69,6 +96,13 @@
     #mapSide { width: 100%; flex: 0 0 auto; max-height: 38%; }
     #mapHead h2 { font-size: 17px; }
     #btnMap { top: auto; bottom: 210px; right: 12px; }
+    #btnBackpack { top: auto; bottom: 268px; right: 12px; }
+    #btnMute { top: auto; bottom: 326px; right: 12px; }
+    #btnSettingsHud { top: auto; bottom: 384px; right: 12px; }
+    /* Backpack rows: on a phone the side-by-side layout squeezes the
+       weapon text into a sliver — stack info above a full-width button. */
+    #backpackItems .shop-item { flex-direction: column; align-items: stretch; gap: 8px; }
+    #backpackItems .shop-item .btn.buy { width: 100%; }
   }
   #touch { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; touch-action: none; }
   #touch.on { display: block; }
@@ -81,6 +115,7 @@
   #btnInteract { right: 24px; bottom: 176px; }
   #btnRun { right: 180px; bottom: 40px; }
   #btnMapTouch { right: 100px; bottom: 120px; }
+  #btnBackpackTouch { right: 180px; bottom: 120px; }
   @media (max-width: 640px) {
     .card h1 { font-size: 30px; }
     .card { padding: 16px; }
@@ -98,14 +133,15 @@
 <div id="startScreen" class="panel">
   <div class="card">
     <h1>NEON BAY</h1>
-    <p class="sub">AN OPEN-WORLD CRIME STORY &mdash; DOWNTOWN &middot; SUNSET BEACH &middot; CINDER PEAKS</p>
-    <p>Leo Vance came to Neon Bay with empty pockets and big plans. Sixty main missions stand between him and the top of the city &mdash; and two locked districts, a five-star police force, and everyone who wants him gone. His old friend Maya waits by the Neon Diner with a lead.</p>
-    <p>Drive, swim, fly, race, play pool and golf, run shops, steal, and survive. One man, one city, no backup.</p>
-    <button class="btn" id="btnNew">New Game</button>
-    <button class="btn secondary" id="btnContinue">Continue</button>
-    <button class="btn secondary" id="btnHow">How to Play</button>
-    <p class="keys" id="howText" hidden>
-      <b>WASD / Arrows</b> move &middot; <b>Mouse</b> aim &middot; <b>Click</b> shoot &middot; <b>E</b> interact / talk &middot; <b>F</b> enter or exit a vehicle &middot; <b>R</b> reload &middot; <b>Q</b> pickpocket &middot; <b>Shift</b> run &middot; <b>Space</b> jump &middot; <b>1&ndash;6</b> weapons &middot; <b>M</b> map &middot; <b>Esc</b> pause.<br>
+    <p class="sub" data-i18n="menu.subtitle">AN OPEN-WORLD CRIME STORY &mdash; DOWNTOWN &middot; SUNSET BEACH &middot; CINDER PEAKS</p>
+    <p data-i18n="menu.intro1">Leo Vance came to Neon Bay with empty pockets and big plans. Sixty main missions stand between him and the top of the city &mdash; and two locked districts, a five-star police force, and everyone who wants him gone. His old friend Maya waits by the Neon Diner with a lead.</p>
+    <p data-i18n="menu.intro2">Drive, swim, fly, race, play pool and golf, run shops, steal, and survive. One man, one city, no backup.</p>
+    <button class="btn" id="btnNew" data-i18n="menu.newGame">New Game</button>
+    <button class="btn secondary" id="btnContinue" data-i18n="menu.continue">Continue</button>
+    <button class="btn secondary" id="btnHow" data-i18n="menu.howTo">How to Play</button>
+    <button class="btn secondary" id="btnSettings" data-i18n="menu.settings">Settings</button>
+    <p class="keys" id="howText" data-i18n-html="menu.howHtml" hidden>
+      <b>WASD / Arrows</b> move &middot; <b>Mouse</b> aim &middot; <b>Click</b> shoot &middot; <b>E</b> interact / talk &middot; <b>F</b> enter or exit a vehicle &middot; <b>R</b> reload &middot; <b>Q</b> pickpocket &middot; <b>Shift</b> run &middot; <b>Space</b> jump &middot; <b>1&ndash;6</b> weapons &middot; <b>B</b> backpack &middot; <b>Scroll</b> cycle weapon (when the backpack is open) &middot; <b>M</b> map &middot; <b>Esc</b> pause.<br>
       Drag mouse untuk orbit kamera, scroll untuk zoom. Di HP: drag area kanan untuk orbit.<br>
       On phones: left stick to move, on-screen buttons to shoot, enter, interact and run.
     </p>
@@ -114,20 +150,21 @@
 
 <div id="pauseMenu" class="panel hidden">
   <div class="card">
-    <h2>Paused</h2>
-    <p>Neon Bay waits for no one &mdash; except right now.</p>
-    <button class="btn" id="btnResume">Resume</button>
-    <button class="btn secondary" id="btnSave">Save Game</button>
-    <button class="btn secondary" id="btnQuitTitle">Quit to Title</button>
+    <h2 data-i18n="pause.title">Paused</h2>
+    <p data-i18n="pause.text">Neon Bay waits for no one &mdash; except right now.</p>
+    <button class="btn" id="btnResume" data-i18n="pause.resume">Resume</button>
+    <button class="btn secondary" id="btnSave" data-i18n="pause.save">Save Game</button>
+    <button class="btn secondary" id="btnSettingsPause" data-i18n="menu.settings">Settings</button>
+    <button class="btn secondary" id="btnQuitTitle" data-i18n="pause.quit">Quit to Title</button>
   </div>
 </div>
 
 <div id="overScreen" class="panel hidden">
   <div class="card">
-    <h2>Wasted</h2>
+    <h2 data-i18n="over.title">Wasted</h2>
     <p id="overText">The streets of Neon Bay got the better of you this time.</p>
-    <button class="btn" id="btnRespawn">Respawn at the Safe House ($100)</button>
-    <button class="btn secondary" id="btnOverTitle">Quit to Title</button>
+    <button class="btn" id="btnRespawn" data-i18n="over.respawn">Respawn at the Safe House ($100)</button>
+    <button class="btn secondary" id="btnOverTitle" data-i18n="over.quit">Quit to Title</button>
   </div>
 </div>
 
@@ -136,7 +173,7 @@
     <h2 id="shopTitle">Shop</h2>
     <p id="shopMoney"></p>
     <div id="shopItems"></div>
-    <button class="btn secondary" id="btnCloseShop">Leave</button>
+    <button class="btn secondary" id="btnCloseShop" data-i18n="shop.leave">Leave</button>
   </div>
 </div>
 
@@ -150,36 +187,57 @@
 
 <div id="interiorPanel" class="panel hidden">
   <div class="card">
-    <h2>Safe House</h2>
-    <p>Home sweet home. Change your look, check the garage, rest up.</p>
-    <button class="btn" id="btnWardrobe">Wardrobe — change clothes</button>
-    <button class="btn" id="btnGarage">Garage — stored cars</button>
-    <button class="btn" id="btnSleep">Sleep — heal up &amp; save</button>
-    <button class="btn secondary" id="btnLeaveHouse">Leave the safe house</button>
+    <h2 data-i18n="interior.title">Safe House</h2>
+    <p data-i18n="interior.text">Home sweet home. Change your look, check the garage, rest up.</p>
+    <button class="btn" id="btnWardrobe" data-i18n="interior.wardrobe">Wardrobe — change clothes</button>
+    <button class="btn" id="btnGarage" data-i18n="interior.garage">Garage — stored cars</button>
+    <button class="btn" id="btnSleep" data-i18n="interior.sleep">Sleep — heal up &amp; save</button>
+    <button class="btn secondary" id="btnLeaveHouse" data-i18n="interior.leave">Leave the safe house</button>
   </div>
 </div>
 
 <div id="wardrobePanel" class="panel hidden">
   <div class="card">
-    <h2>Wardrobe</h2>
-    <p>Your outfit shows on your character in the streets.</p>
+    <h2 data-i18n="wardrobe.title">Wardrobe</h2>
+    <p data-i18n="wardrobe.text">Your outfit shows on your character in the streets.</p>
     <div id="wardrobeItems"></div>
-    <button class="btn secondary" id="btnCloseWardrobe">Done</button>
+    <button class="btn secondary" id="btnCloseWardrobe" data-i18n="wardrobe.done">Done</button>
   </div>
 </div>
 
 <div id="garagePanel" class="panel hidden">
   <div class="card">
-    <h2>Garage</h2>
-    <p>Cars you parked here. Pick one to take out.</p>
+    <h2 data-i18n="garage.title">Garage</h2>
+    <p data-i18n="garage.text">Cars you parked here. Pick one to take out.</p>
     <div id="garageItems"></div>
-    <button class="btn secondary" id="btnCloseGarage">Done</button>
+    <button class="btn secondary" id="btnCloseGarage" data-i18n="garage.done">Done</button>
+  </div>
+</div>
+
+<div id="backpackPanel" class="panel hidden">
+  <div class="card">
+    <h2 id="backpackTitle">Backpack</h2>
+    <p id="backpackHint">Click a weapon to equip it · keys 1–6 switch · mouse wheel cycles · B closes</p>
+    <div id="backpackItems"></div>
+    <button class="btn secondary" id="btnCloseBackpack" data-i18n="backpack.close">Close (B)</button>
+  </div>
+</div>
+
+<div id="settingsPanel" class="panel hidden">
+  <div class="card">
+    <h2 data-i18n="settings.title">Settings</h2>
+    <div id="settingsBody"></div>
+    <button class="btn secondary" id="btnCloseSettings" data-i18n="settings.close">Close</button>
   </div>
 </div>
 
 <div id="toast"></div>
+<input type="file" id="importSaveFile" accept="application/json,.json" hidden>
 
-<button id="btnMap" title="Open the map (M)" style="display:none">🗺️ Map — M</button>
+<button id="btnMap" title="Open the map (M)" data-i18n="hud.map" style="display:none">🗺️ Map — M</button>
+<button id="btnBackpack" title="Open the backpack (B)" data-i18n="hud.backpack" style="display:none">🎒 Backpack — B</button>
+<button id="btnMute" title="Mute / unmute (N)" style="display:none">🔊 Sound — N</button>
+<button id="btnSettingsHud" title="Settings" data-i18n-title="menu.settings" style="display:none">⚙️</button>
 
 <div id="mapPanel" class="hidden">
   <div id="mapHead">
@@ -187,7 +245,7 @@
       <h2>NEON BAY — MAP</h2>
       <p id="mapDest">No destination — pick a place or tap a road</p>
     </div>
-    <button class="btn secondary" id="btnCloseMap">Close ✕ (M)</button>
+    <button class="btn secondary" id="btnCloseMap" data-i18n="map.close">Close ✕ (M)</button>
   </div>
   <div id="mapBody">
     <div id="mapWrap">
@@ -198,26 +256,28 @@
       </div>
     </div>
     <div id="mapSide">
-      <button class="btn danger hidden" id="btnCancelNav">Cancel navigation</button>
-      <h3>Destinations</h3>
+      <button class="btn danger hidden" id="btnCancelNav" data-i18n="map.cancelNav">Cancel navigation</button>
+      <h3 data-i18n="map.destTitle">Destinations</h3>
       <div id="mapList"></div>
-      <h3>Legend</h3>
+      <h3 data-i18n="map.legendTitle">Legend</h3>
       <div id="mapLegend"></div>
-      <p class="mapHint">Scroll / pinch to zoom · drag to pan · click a place or a road to set GPS. Grey districts are locked — finish the mission to open them. The game is paused while the map is open.</p>
+      <p class="mapHint" data-i18n="map.hint">Scroll / pinch to zoom · drag to pan · click a place or a road to set GPS. Grey districts are locked — finish the mission to open them. The game is paused while the map is open.</p>
     </div>
   </div>
 </div>
 
 <div id="touch">
   <div id="stick"><div id="stickKnob"></div></div>
-  <button class="tbtn" id="btnFire">FIRE</button>
-  <button class="tbtn" id="btnEnter">CAR</button>
+  <button class="tbtn" id="btnFire" data-i18n="touch.fire">FIRE</button>
+  <button class="tbtn" id="btnEnter" data-i18n="touch.enter">CAR</button>
   <button class="tbtn" id="btnInteract">E</button>
-  <button class="tbtn" id="btnRun">RUN</button>
-  <button class="tbtn" id="btnMapTouch">MAP</button>
+  <button class="tbtn" id="btnRun" data-i18n="touch.run">RUN</button>
+  <button class="tbtn" id="btnMapTouch" data-i18n="touch.map">MAP</button>
+  <button class="tbtn" id="btnBackpackTouch" data-i18n="touch.backpack">BAG</button>
 </div>
 
 <script src="./vendor/three.min.js"></script>
+<script src="./vendor/tone.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

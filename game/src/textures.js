@@ -214,11 +214,23 @@ function facadeCanvases(variant) {
           ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 8); ctx.stroke();
         }
       }
-    } else if (variant === 'glass') {
-      ctx.fillStyle = '#3d5a73';
+    } else if (variant === 'glass' || variant === 'tower') {
+      // Glass curtain wall: dark blue-grey with a pale mullion grid. The
+      // tower variant is the same curtain, denser and darker (taller slabs).
+      ctx.fillStyle = variant === 'tower' ? '#2c4a63' : '#3d5a73';
       ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = 'rgba(180,210,230,0.35)';
       for (let y = 6; y < h; y += 14) for (let x = 6; x < w; x += 14) ctx.fillRect(x, y, 9, 9);
+    } else if (variant === 'house') {
+      // Warm plaster house front: cream walls, a brown plinth at the base,
+      // and a terracotta band at the top (under the pitched roof).
+      ctx.fillStyle = '#e8dcc3';
+      ctx.fillRect(0, 0, w, h);
+      speckle(ctx, w, h, 500, ['#d9c8a8', '#f2e8d0', '#cbb894'], 2);
+      ctx.fillStyle = '#8a6b4a';
+      ctx.fillRect(0, h - 14, w, 14);
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(0, 0, w, 10);
     } else {
       // concrete panels, stained and dull.
       ctx.fillStyle = '#9a938a';
@@ -230,23 +242,28 @@ function facadeCanvases(variant) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       }
     }
-    // Windows: dark glass with a pale frame, 4 across x 8 up.
-    for (let wy = 10; wy < h - 12; wy += 28) {
+    // Windows: 1.2 m wide x 1.0 m tall on a 2.4 m floor rhythm. The tile is
+    // 9.6 x 19.2 m at 128 x 256 px (13.33 px/m), so 16 x 13 px is a normal
+    // window, not a slit. 4 across x 8 up, with a pale frame.
+    for (let wy = 12; wy < h - 16; wy += 32) {
       for (let wx = 10; wx < w - 12; wx += 28) {
         ctx.fillStyle = 'rgba(226,232,240,0.85)';
         ctx.fillRect(wx - 1, wy - 1, 18, 15);
-        ctx.fillStyle = variant === 'glass' ? '#16324a' : '#1e293b';
+        ctx.fillStyle = variant === 'glass' || variant === 'tower' ? '#16324a' : '#1e293b';
         ctx.fillRect(wx, wy, 16, 13);
         ctx.fillStyle = 'rgba(255,255,255,0.25)';
-        ctx.fillRect(wx, wy, 16, 3);
+        ctx.fillRect(wx, wy, 16, 4);
+        // Cross mullion: a real window has a frame down the middle.
+        ctx.fillStyle = 'rgba(226,232,240,0.6)';
+        ctx.fillRect(wx + 7, wy, 2, 13);
       }
     }
   });
   const night = canvasTexture(`facade-${variant}-night`, 128, 256, (ctx, w, h) => {
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
-    // The same window grid, ~35% lit warm.
-    for (let wy = 10, row = 0; wy < h - 12; wy += 28, row += 1) {
+    // The same window grid (16 x 13 px), ~35% lit warm.
+    for (let wy = 12, row = 0; wy < h - 16; wy += 32, row += 1) {
       for (let wx = 10, col = 0; wx < w - 12; wx += 28, col += 1) {
         if (hash01(row * 7 + col * 13, variant.length * 31 + row) < 0.35) {
           ctx.fillStyle = hash01(col, row * 5) < 0.5 ? '#fbbf24' : '#f59e0b';
@@ -258,7 +275,7 @@ function facadeCanvases(variant) {
   return { day, night };
 }
 
-const FACADE_VARIANTS = ['brick', 'concrete', 'glass'];
+const FACADE_VARIANTS = ['brick', 'concrete', 'glass', 'house', 'tower'];
 
 /** Facade material for a building colour; variant cycles by building hash. */
 export function facadeMat(color, variantIndex = 0) {
@@ -351,9 +368,75 @@ export function hubcapMat() {
   });
 }
 
+// --- Neon signs (v4) -----------------------------------------------------
+// A glowing sign board: dark backing, bright block text, painted once per
+// (text, colour) on a canvas. The material's emissive map is the same
+// texture, so the sign reads by day and GLOWS at night (registered with
+// registerNightGlow: dim 0.55, night 2.4). All sign texts are original.
+// Shop name plate: a canvas texture with the shop's name on a dark plate
+// in the shop's colour — the same canvas-text technique as the neon signs
+// (crisp at street-view distance, no font file, no worker, no dependency).
+// Why not troika-three-text: troika is ESM-only with bare-specifier imports
+// ('three', 'troika-three-utils', ...) that need an import map in index.html
+// (not this builder's file) and is untested against the vendored three r149;
+// canvas text already serves every sign in this game. See the final report.
+export function shopSignMat(name, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 72;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#14141c';
+  ctx.fillRect(0, 0, 512, 72);
+  ctx.strokeStyle = color || '#ffffff';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(4, 4, 504, 64);
+  ctx.fillStyle = '#fff8e7';
+  ctx.font = 'bold 40px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(name).toUpperCase(), 256, 38);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshBasicMaterial({ map: tex });
+}
+
+export function neonSignMat(text, color) {
+  return stdMat(`neon-${text}-${color}`, () => {
+    const T = three();
+    const map = canvasTexture(`neon-${text}-${color}`, 256, 64, (ctx, w, h) => {
+      ctx.fillStyle = '#0b0f1a';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(3, 3, w - 6, h - 6);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 34px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Shrink the text until it fits the board.
+      let size = 34;
+      let label = text;
+      while (ctx.measureText(label).width > w - 24 && size > 12) {
+        size -= 2;
+        ctx.font = `bold ${size}px system-ui, sans-serif`;
+      }
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 14;
+      ctx.fillText(label, w / 2, h / 2 + 1);
+      ctx.shadowBlur = 0;
+    });
+    const m = new T.MeshStandardMaterial({
+      map, emissiveMap: map, emissive: 0xffffff,
+      emissiveIntensity: 0.55, roughness: 0.4, metalness: 0,
+    });
+    _nightGlow.push({ material: m, day: 0.55, night: 2.4 });
+    return m;
+  });
+}
+
 /** A light that is dim by day and glows at night (lamps, headlights). */
-export function nightLightMat(key, color, dayIntensity = 0.1, nightIntensity = 1.6) {
-  return stdMat(key, () => {
+export function nightLightMat(key, color, dayIntensity = 0.1, nightIntensity = 1.6) {  return stdMat(key, () => {
     const T = three();
     const m = new T.MeshStandardMaterial({
       color, emissive: color, emissiveIntensity: dayIntensity,

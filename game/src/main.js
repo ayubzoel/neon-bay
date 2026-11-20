@@ -18,24 +18,158 @@ import {
 import { createRandom } from './random.js';
 import {
   SCREEN_ACTIVITY, SCREEN_DIALOG, SCREEN_INTERIOR, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_SHOP, SCREEN_TITLE,
-  activeCharacter, addWanted, advanceClock, applySaveData, createGameState, damagePlayer, decayWanted, loadSaveData, saveGame, showMessage,
+  activeCharacter, addWanted, advanceClock, applySaveData, createGameState, damagePlayer, decayWanted, deleteAllSaves, deleteSave, exportSaveJson, importSaveJson, isNight, listSaveSlots, loadSaveData, loadSettings, resetSettings, saveGame, saveSettings, showMessage, validateSettings,
 } from './state.js';
-import { buildWorld } from './world.js';
+import { buildWorld, districtAt } from './world.js';
 import { createRenderer } from './render.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createUI } from './ui.js';
+import { ACTION_CONFIRM, ACTION_PAUSE, createInput, getBindings, loadBindings, resetBindings, setBinding, setVibration } from './input.js';
+import { createUI, keyDisplay } from './ui.js';
 import { enterVehicle, exitVehicle, nearestVehicle, spawnVehicles, updateVehicles } from './vehicles.js';
 import { nearestInteractable, updatePlayer } from './player.js';
 import { spawnNpcs, talkToNpc, pickpocket, updateNpcs } from './npc.js';
 import { updatePolice } from './police.js';
-import { buildSidePool, nextMainMission, startMainMission, startSideQuest, updateEnemies, updateMissions, updatePickups } from './missions.js';
-import { updateBullets, updateCombat } from './combat.js';
+import { buildSidePool, missionBrief, missionTitle, nextMainMission, objectiveLineFor, startMainMission, startSideQuest, updateEnemies, updateMissions, updatePickups } from './missions.js';
+import { updateBullets, updateCombat, BACKPACK_CAPACITY, backpackItems, cycleWeapon, switchWeapon } from './combat.js';
 import { buyItem, selectOutfit, shopItemsFor, sleepAtSafeHouse, storeCurrentCar, takeOutCar } from './shops.js';
 import { hideActivityCanvas, startActivity, startRaceChallenge, startSwimChallenge, updateActivity, updateRaceChallenge, updateSwimChallenge } from './activities.js';
-import { initAudio, playSfx, setListenerPosition } from './audio.js';
+import { applyAudioSettings, cycleRadio, getAudioState, getRadioChannel, initAudio, isMuted, playSfx, playTest, setAmbience, setEngine, setListenerPosition, setMusic, setMuted, setSiren } from './audio.js';
 import { stageShot } from './shots.js';
-import { CLOTHES } from './config.js';
+import { CLOTHES, WEAPON_ORDER } from './config.js';
 import { clearNav, createMapController, getDestinations, navRemaining, rebuildNavRoute, setDestination } from './map.js';
+import { addStrings, applyI18nToDOM, getLang, onLangChange, setLang, t } from './i18n.js';
+import { NEON_SIGNS } from './data.js';
+import { neonSignMat } from './textures.js';
+
+// v4 i18n: announcements, dialogues, prompts and toasts from the main
+// loop. Menu / panel strings live in ui.js, map strings in map.js.
+addStrings('en', {
+  'main.newGame': 'New game. Talk to Rico at the Neon Diner.',
+  'main.welcomeBack': 'Welcome back to Neon Bay.',
+  'main.playing': 'Playing. Talk to Rico at the Neon Diner.',
+  'main.paused': 'Paused.',
+  'main.resumed': 'Playing.',
+  'main.respawn': 'Back on your feet at the safe house.',
+  'main.titleHint': 'Neon Bay. Press Enter or click to start.',
+  'main.parkNear': 'Park near the safe house to store this car.',
+  'main.carStolenSeen': 'Car stolen in plain sight',
+  'main.carStolenUnseen': 'Car stolen — nobody saw.',
+  'main.needVehicleRace': 'You need a vehicle to race!',
+  'main.arrived': 'Arrived at {label}.',
+  'main.freeRoam': 'Free roam it is.',
+  'main.finishedAll': 'You finished every main mission. Neon Bay is yours now — side jobs are still out there if you want cash.',
+  'main.onMission': 'You are on "{title}". Follow the yellow marker on the map.',
+  'main.startMission': 'Start mission {id}: {title} (${reward})',
+  'main.notYet': 'Not yet.',
+  'main.gotWork': 'Got work for you, {name}. {title} — {brief} Pays ${reward}.',
+  'main.takeJob': 'Take the job (${reward})',
+  'main.maybeLater': 'Maybe later.',
+  'main.onIt': 'On it.',
+  'main.prompt': '{key} — {label}',
+  'main.enterVehicle': 'Enter {name} ({kind})',
+  'main.takenDown': '{name} got taken down in {district}. The crew will remember this one.',
+  'main.muted': 'Sound muted (N to unmute).',
+  'main.unmuted': 'Sound on.',
+  'main.radio': 'Radio: {station}',
+  'main.noGameSave': 'Start or continue a game before saving.',
+  'main.importOk': 'Save imported.',
+  'main.importFail': 'That file is not a Neon Bay save.',
+  'main.slotLoaded': 'Save loaded.',
+  'main.slotDeleted': 'Save deleted.',
+  'main.settingsReset': 'Settings reset to default.',
+  'main.bindingsReset': 'Controls reset to default.',
+  // Neon signage (data.js NEON_SIGNS order) — generic words translate,
+  // the city name stays. Repainted by repaintNeonSigns() on language change.
+  'neon.sign.0': 'NEON BAY',
+  'neon.sign.1': 'PIER 9',
+  'neon.sign.2': 'CASINO',
+  'neon.sign.3': 'DINER',
+  'neon.sign.4': 'SURF SHOP',
+  'neon.sign.5': 'HOTEL',
+  'neon.sign.6': 'LODGE',
+  'neon.sign.7': 'MARKET',
+});
+addStrings('id', {
+  'main.newGame': 'Game baru. Bicara dengan Rico di Neon Diner.',
+  'main.welcomeBack': 'Selamat datang kembali di Neon Bay.',
+  'main.playing': 'Bermain. Bicara dengan Rico di Neon Diner.',
+  'main.paused': 'Jeda.',
+  'main.resumed': 'Bermain.',
+  'main.respawn': 'Kamu bangkit lagi di safe house.',
+  'main.titleHint': 'Neon Bay. Tekan Enter atau klik untuk mulai.',
+  'main.parkNear': 'Parkir dekat safe house untuk menyimpan mobil ini.',
+  'main.carStolenSeen': 'Mobil dicuri di depan umum',
+  'main.carStolenUnseen': 'Mobil dicuri — tidak ada yang melihat.',
+  'main.needVehicleRace': 'Kamu butuh kendaraan untuk balapan!',
+  'main.arrived': 'Tiba di {label}.',
+  'main.freeRoam': 'Jelajah bebas saja.',
+  'main.finishedAll': 'Kamu menyelesaikan semua misi utama. Neon Bay milikmu sekarang — pekerjaan sampingan masih ada kalau mau uang.',
+  'main.onMission': 'Kamu sedang menjalani "{title}". Ikuti penanda kuning di peta.',
+  'main.startMission': 'Mulai misi {id}: {title} (${reward})',
+  'main.notYet': 'Belum.',
+  'main.gotWork': 'Ada kerjaan buatmu, {name}. {title} — {brief} Bayaran ${reward}.',
+  'main.takeJob': 'Ambil pekerjaan (${reward})',
+  'main.maybeLater': 'Mungkin nanti.',
+  'main.onIt': 'Siap.',
+  'main.prompt': '{key} — {label}',
+  'main.enterVehicle': 'Naik {name} ({kind})',
+  'main.takenDown': '{name} tumbang di {district}. Kru akan mengingat ini.',
+  'main.muted': 'Suara dibisukan (N untuk membunyikan).',
+  'main.unmuted': 'Suara menyala.',
+  'main.radio': 'Radio: {station}',
+  'main.noGameSave': 'Mulai atau lanjutkan game dulu sebelum menyimpan.',
+  'main.importOk': 'Save berhasil diimpor.',
+  'main.importFail': 'File itu bukan save Neon Bay.',
+  'main.slotLoaded': 'Save dimuat.',
+  'main.slotDeleted': 'Save dihapus.',
+  'main.settingsReset': 'Pengaturan direset ke default.',
+  'main.bindingsReset': 'Kontrol direset ke default.',
+  'neon.sign.0': 'NEON BAY',
+  'neon.sign.1': 'DERMAGA 9',
+  'neon.sign.2': 'KASINO',
+  'neon.sign.3': 'RESTORAN',
+  'neon.sign.4': 'TOKO SELANCAR',
+  'neon.sign.5': 'HOTEL',
+  'neon.sign.6': 'PONDOK',
+  'neon.sign.7': 'PASAR',
+});
+
+// --- v4 Settings: cross-builder hook registry ------------------------------
+// Builders A/B assign these (render.js quality, weather.js time/weather,
+// npc.js/vehicles.js counts) — main.js calls them when a setting changes.
+// Until they do, the setting is stored and the parts this build owns
+// (HUD, minimap, touch size, sensitivity, audio, language) still apply.
+window.__neonBayHooks = window.__neonBayHooks || {
+  onQualityChange: null,
+  onTimeMode: null,
+  onWeatherMode: null,
+  onNpcVehicleCount: null,
+};
+
+// Settings load once at boot and are applied live from then on.
+let settings = loadSettings();
+
+/** Apply the current settings to every system this build owns. */
+function applySettings() {
+  applyAudioSettings(settings.audio);
+  loadBindings(settings.controls.bindings);
+  setVibration(settings.controls.vibration);
+  document.body.classList.remove('touch-small', 'touch-normal', 'touch-large');
+  document.body.classList.add(`touch-${settings.controls.touchSize}`);
+  const hud = document.getElementById('hud');
+  if (hud) hud.style.display = settings.graphics.showHud ? '' : 'none';
+  const mini = document.getElementById('mini');
+  if (mini) mini.style.display = settings.graphics.showMinimap ? '' : 'none';
+  const hooks = window.__neonBayHooks || {};
+  try { if (typeof hooks.onQualityChange === 'function') hooks.onQualityChange(settings.graphics.quality); } catch { /* hook errors must not break settings */ }
+  try { if (typeof hooks.onTimeMode === 'function') hooks.onTimeMode(settings.time.dayNight); } catch { /* see above */ }
+  try { if (typeof hooks.onWeatherMode === 'function') hooks.onWeatherMode(settings.time.weather); } catch { /* see above */ }
+  updateMuteButton();
+}
+
+function persistSettings() {
+  settings.language = getLang();
+  saveSettings(settings);
+}
 
 const MAX_FRAME = 0.25;
 
@@ -48,11 +182,33 @@ const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+// The live input instance (created in runGame) — module scope so the
+// Settings rebind handler can reach it.
+let input = null;
 
 const canvas = document.getElementById('game');
 const statusEl = document.getElementById('status');
 const rng = createRandom(seed);
 const world = buildWorld(rng);
+
+// v4 i18n: neon signs are 3D canvas textures baked at buildWorld time
+// (world.js uses the raw NEON_SIGNS text), so a language switch — or a
+// reload with another language saved — leaves the old text on the
+// buildings. Repaint every sign mesh with the translated text; the meshes
+// live in world.densityMeshes.signs in creation order, sign i cycling
+// NEON_SIGNS[i % length] (see world.js buildMeshes). Cosmetic only —
+// any failure here must never break the game.
+function repaintNeonSigns() {
+  try {
+    const signs = world && world.densityMeshes && world.densityMeshes.signs;
+    if (!signs || !signs.length) return;
+    signs.forEach((mesh, i) => {
+      const sign = NEON_SIGNS[i % NEON_SIGNS.length];
+      mesh.material = neonSignMat(t(`neon.sign.${i % NEON_SIGNS.length}`), sign.color);
+    });
+  } catch (e) { /* neon signs are cosmetic */ }
+}
+repaintNeonSigns();
 const renderer = createRenderer(canvas);
 let state = createGameState(seed);
 state.fireCd = 0;
@@ -92,7 +248,7 @@ function mouseWorld(input) {
 function refreshShopPanel() {
   const shop = state.shop;
   if (!shop) return;
-  const titles = { food: shop.name + ' — Food', gun: shop.name + ' — Guns & Ammo', clothes: shop.name + ' — Clothes', mods: shop.name + ' — Car Mods' };
+  const titles = { food: `${shop.name} — ${t('shop.kind.food')}`, gun: `${shop.name} — ${t('shop.kind.gun')}`, clothes: `${shop.name} — ${t('shop.kind.clothes')}`, mods: `${shop.name} — ${t('shop.kind.mods')}` };
   ui.showShop(shop.kind, titles[shop.kind] || shop.name, shopItemsFor(state, shop.kind), state.money);
 }
 
@@ -124,6 +280,291 @@ const btnMapTouchEl = document.getElementById('btnMapTouch');
 if (btnMapTouchEl) btnMapTouchEl.addEventListener('click', () => toggleMap());
 let btnMapShown = false;
 
+// --- Backpack (map.js-style wiring, Builder C v4) ------------------------
+// The bag holds every owned weapon with its own ammo (combat.js). While
+// it is open the world is paused like the map: B / the HUD button / the
+// touch BAG button toggle it, the mouse wheel cycles weapons instead of
+// zooming the camera, and 1–6 / clicking a row equips.
+function refreshBackpackPanel() {
+  if (!state.backpackOpen) return;
+  ui.showBackpack(backpackItems(state), BACKPACK_CAPACITY);
+}
+function openBackpack() {
+  if (state.screen !== SCREEN_PLAY || state.backpackOpen || state.showMap) return;
+  state.backpackOpen = true;
+  refreshBackpackPanel();
+  playSfx('backpack');
+}
+function closeBackpack() {
+  if (!state.backpackOpen) return;
+  state.backpackOpen = false;
+  ui.hideAll();
+  playSfx('backpack');
+}
+function toggleBackpack() {
+  if (state.backpackOpen) closeBackpack();
+  else openBackpack();
+}
+const btnBackpackEl = document.getElementById('btnBackpack');
+if (btnBackpackEl) btnBackpackEl.addEventListener('click', () => toggleBackpack());
+let btnBackpackShown = false;
+// v4: the wheel also cycles weapons when the pointer is OVER the panel —
+// the panel covers the middle of the screen, so a wheel over it never
+// reaches the canvas listener (input.js) and would otherwise do nothing.
+const backpackPanelEl = document.getElementById('backpackPanel');
+if (backpackPanelEl) {
+  backpackPanelEl.addEventListener('wheel', (event) => {
+    if (!state.backpackOpen) return;
+    event.preventDefault();
+    cycleWeapon(state, event.deltaY > 0 ? 1 : -1);
+    refreshBackpackPanel();
+  }, { passive: false });
+}
+
+// --- Mute (v4 audio): the N key + the HUD speaker button toggle the
+// master mute. The button label follows the state (and the language).
+const btnMuteEl = document.getElementById('btnMute');
+function updateMuteButton() {
+  if (!btnMuteEl) return;
+  btnMuteEl.textContent = isMuted() ? t('hud.muteOff') : t('hud.muteOn');
+}
+function toggleMute() {
+  setMuted(!isMuted());
+  settings.audio.muted = isMuted();
+  persistSettings();
+  updateMuteButton();
+  playSfx('click');
+  showMessage(state, isMuted() ? t('main.muted') : t('main.unmuted'));
+}
+if (btnMuteEl) btnMuteEl.addEventListener('click', () => toggleMute());
+let btnMuteShown = false;
+
+// --- Settings (v4): open from the title screen, the pause menu or the
+// HUD gear button. The world is paused while it is open, like the map.
+let settingsOpen = false;
+let settingsReturnTo = null; // 'title' | 'paused' | 'play'
+let settingsRebinding = null;
+const importFileEl = document.getElementById('importSaveFile');
+let importSlot = 1;
+
+function buildSettingsView() {
+  return {
+    settings,
+    slots: listSaveSlots(),
+    bindings: getBindings(),
+    rebinding: settingsRebinding,
+    handlers: settingsHandlers,
+  };
+}
+function refreshSettingsPanel() {
+  if (settingsOpen) ui.showSettings(buildSettingsView());
+}
+function openSettings() {
+  if (settingsOpen) return;
+  if (state.screen === SCREEN_TITLE) settingsReturnTo = 'title';
+  else if (state.screen === SCREEN_PAUSED) settingsReturnTo = 'paused';
+  else if (state.screen === SCREEN_PLAY) {
+    settingsReturnTo = 'play';
+    state.screen = SCREEN_PAUSED;
+  } else return;
+  settingsOpen = true;
+  settingsRebinding = null;
+  ui.showSettings(buildSettingsView());
+  playSfx('click');
+}
+function closeSettings() {
+  if (!settingsOpen) return;
+  settingsOpen = false;
+  settingsRebinding = null;
+  const back = settingsReturnTo;
+  settingsReturnTo = null;
+  if (back === 'title') ui.showStart(!!loadSaveData());
+  else if (back === 'paused') ui.showPause();
+  else {
+    state.screen = SCREEN_PLAY;
+    ui.hideAll();
+  }
+  playSfx('click');
+}
+
+const settingsHandlers = {
+  onChange(path, value) {
+    const parts = path.split('.');
+    const group = parts[0];
+    const key = parts.slice(1).join('.');
+    if (group === 'audio' && key === 'muted') {
+      settings.audio.muted = !!value;
+      setMuted(settings.audio.muted);
+    } else if (group === 'audio' && key.startsWith('mutedCategories.')) {
+      const cat = key.split('.')[1];
+      settings.audio.mutedCategories[cat] = !!value;
+      applyAudioSettings(settings.audio);
+    } else if (group === 'audio') {
+      settings.audio[key] = value;
+      applyAudioSettings(settings.audio);
+    } else if (group === 'save') {
+      settings.save[key] = value;
+    } else if (group === 'controls') {
+      settings.controls[key] = value;
+    } else if (group === 'graphics') {
+      settings.graphics[key] = value;
+    } else if (group === 'time') {
+      settings.time[key] = value;
+    }
+    persistSettings();
+    applySettings();
+  },
+  onRebind(action) {
+    if (!input) return;
+    settingsRebinding = action;
+    refreshSettingsPanel();
+    input.startRebind(action, (act, code) => {
+      settingsRebinding = null;
+      if (code === null) {
+        refreshSettingsPanel();
+        return;
+      }
+      const res = setBinding(act, code);
+      if (!res.ok) {
+        showMessage(state, t('settings.keyTaken', { action: t(`settings.controls.${res.takenBy}`) || res.takenBy }), 4);
+        refreshSettingsPanel();
+        return;
+      }
+      settings.controls.bindings = getBindings();
+      persistSettings();
+      applySettings();
+      refreshSettingsPanel();
+    });
+  },
+  onResetBindings() {
+    settings.controls.bindings = resetBindings();
+    persistSettings();
+    applySettings();
+    showMessage(state, t('main.bindingsReset'));
+    refreshSettingsPanel();
+  },
+  onPreset(name) {
+    const presets = {
+      silent: { master: 0, music: 0, sfx: 0, ambience: 0, vehicle: 0 },
+      normal: { master: 0.8, music: 0.6, sfx: 0.9, ambience: 0.5, vehicle: 0.7 },
+      loud: { master: 1, music: 0.9, sfx: 1, ambience: 0.8, vehicle: 1 },
+    };
+    const p = presets[name];
+    if (!p) return;
+    Object.assign(settings.audio, p);
+    settings.audio.muted = false;
+    settings.audio.mutedCategories = {};
+    persistSettings();
+    applySettings();
+    refreshSettingsPanel();
+  },
+  onTestSound(cat) {
+    playTest(cat);
+  },
+  onSlotSave(slot) {
+    if (state.screen === SCREEN_TITLE) {
+      showMessage(state, t('main.noGameSave'), 4);
+      return;
+    }
+    if (saveGame(state, slot)) refreshSettingsPanel();
+  },
+  onSlotLoad(slot) {
+    const data = loadSaveData(slot);
+    if (!data) return;
+    state = createGameState(seed);
+    state.fireCd = 0;
+    state.ownedClothes = ['street'];
+    buildEntities();
+    applySaveData(state, data);
+    settingsOpen = false;
+    settingsReturnTo = null;
+    state.screen = SCREEN_PLAY;
+    ui.hideAll();
+    announce(t('main.slotLoaded'));
+    initAudio();
+  },
+  onSlotDelete(slot) {
+    if (deleteSave(slot)) {
+      showMessage(state, t('main.slotDeleted'));
+      refreshSettingsPanel();
+    }
+  },
+  onSlotExport(slot) {
+    const exp = exportSaveJson(slot);
+    if (!exp) return;
+    const blob = new Blob([exp.json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exp.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  onSlotImport(slot) {
+    importSlot = slot;
+    if (importFileEl) importFileEl.click();
+  },
+  onResetProgress() {
+    deleteAllSaves();
+    showMessage(state, t('settings.resetDone'), 4);
+    refreshSettingsPanel();
+  },
+  onResetSettings() {
+    setLang('en');
+    settings = resetSettings();
+    persistSettings();
+    applySettings();
+    showMessage(state, t('main.settingsReset'), 4);
+    refreshSettingsPanel();
+  },
+  onLanguage(lang) {
+    if (setLang(lang)) {
+      settings.language = getLang();
+      persistSettings();
+    }
+    refreshSettingsPanel();
+  },
+  onClose() {
+    closeSettings();
+  },
+};
+if (importFileEl) {
+  importFileEl.addEventListener('change', () => {
+    const file = importFileEl.files && importFileEl.files[0];
+    importFileEl.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ok = importSaveJson(importSlot, String(reader.result || ''));
+      showMessage(state, ok ? t('main.importOk') : t('main.importFail'), 4);
+      refreshSettingsPanel();
+    };
+    reader.readAsText(file);
+  });
+}
+const btnSettingsEl = document.getElementById('btnSettingsHud');
+if (btnSettingsEl) btnSettingsEl.addEventListener('click', () => openSettings());
+let btnSettingsShown = false;
+
+// v4 i18n: static-HTML strings are applied at boot (data-i18n) and again
+// on every language switch; dynamic panels re-render themselves.
+applyI18nToDOM();
+applySettings();
+onLangChange(() => {
+  updateMuteButton();
+  if (state.backpackOpen) refreshBackpackPanel();
+  // The HUD objective line was baked in the old language — rebuild it
+  // from the active mission's data.js keys, and repaint the neon signs
+  // (their canvas textures were baked at buildWorld time).
+  if (state && (state.missions.active || state.missions.activeSide)) {
+    state.objective = objectiveLineFor(state);
+    announce(state.objective);
+  }
+  repaintNeonSigns();
+});
+
 const ui = createUI({
   onNewGame() {
     state = createGameState(seed);
@@ -132,7 +573,8 @@ const ui = createUI({
     buildEntities();
     state.screen = SCREEN_PLAY;
     ui.hideAll();
-    announce('New game. Talk to Rico at the Neon Diner.');
+    announce(t('main.newGame'));
+    initAudio();
   },
   onContinue() {
     const data = loadSaveData();
@@ -143,16 +585,25 @@ const ui = createUI({
     if (data) applySaveData(state, data);
     state.screen = SCREEN_PLAY;
     ui.hideAll();
-    announce('Welcome back to Neon Bay.');
+    announce(t('main.welcomeBack'));
+    initAudio();
+  },
+  onOpenSettings() {
+    openSettings();
+  },
+  onCloseSettings() {
+    closeSettings();
   },
   onResume() {
     state.screen = SCREEN_PLAY;
+    state.backpackOpen = false;
     ui.hideAll();
   },
   onSave() {
     saveGame(state);
   },
   onQuitTitle() {
+    state.backpackOpen = false;
     state.screen = SCREEN_TITLE;
     ui.showStart(!!loadSaveData());
   },
@@ -168,7 +619,7 @@ const ui = createUI({
     state.stats.deaths += 1;
     state.screen = SCREEN_PLAY;
     ui.hideAll();
-    announce('Back on your feet at the safe house.');
+    announce(t('main.respawn'));
   },
   onCloseShop() {
     state.screen = SCREEN_PLAY;
@@ -184,8 +635,8 @@ const ui = createUI({
   },
   onWardrobeOpen() {
     const items = CLOTHES.map((c) => ({
-      id: c.id, name: c.name, price: c.price,
-      desc: c.id === 'street' ? 'Everyday look' : `A fresh ${c.name.toLowerCase()} look`,
+      id: c.id, name: t(`clothes.${c.id}`), price: c.price,
+      desc: c.id === 'street' ? t('wardrobe.everyday') : t('wardrobe.fresh', { name: t(`clothes.${c.id}`) }),
       owned: (state.ownedClothes || []).includes(c.id) || c.price === 0,
       current: state.hero.outfit === c.id,
     }));
@@ -223,6 +674,12 @@ const ui = createUI({
   onGarageClose() {
     ui.showInterior();
   },
+  onBackpackClose() {
+    closeBackpack();
+  },
+  onBackpackSelect(key) {
+    if (switchWeapon(state, key)) refreshBackpackPanel();
+  },
 });
 
 function openShop(shop) {
@@ -236,7 +693,7 @@ function openTalk(npc) {
   const text = talkToNpc(state, npc);
   if (text === null) return;
   state.screen = SCREEN_DIALOG;
-  state.dialogOptions = [{ label: 'Nice talking to you.', fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
+  state.dialogOptions = [{ label: t('ui.dialogDefault'), fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
   ui.showDialog(npc.name, text, state.dialogOptions);
 }
 
@@ -244,20 +701,20 @@ function openGiver(npc) {
   const next = nextMainMission(state);
   if (!next) {
     state.screen = SCREEN_DIALOG;
-    state.dialogOptions = [{ label: 'Free roam it is.', fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
-    ui.showDialog(npc.name, 'You finished every main mission. Neon Bay is yours now — side jobs are still out there if you want cash.', state.dialogOptions);
+    state.dialogOptions = [{ label: t('main.freeRoam'), fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
+    ui.showDialog(npc.name, t('main.finishedAll'), state.dialogOptions);
     return;
   }
   if (state.missions.active) {
     state.screen = SCREEN_DIALOG;
-    state.dialogOptions = [{ label: 'On it.', fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
-    ui.showDialog(npc.name, `You are on "${state.missions.active.title}". Follow the yellow marker on the map.`, state.dialogOptions);
+    state.dialogOptions = [{ label: t('main.onIt'), fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } }];
+    ui.showDialog(npc.name, t('main.onMission', { title: missionTitle(state.missions.active) }), state.dialogOptions);
     return;
   }
   state.screen = SCREEN_DIALOG;
   state.dialogOptions = [
     {
-      label: `Start mission ${next.id}: ${next.title} ($${next.reward})`,
+      label: t('main.startMission', { id: next.id, title: missionTitle(next), reward: next.reward }),
       fn: () => {
         startMainMission(state, next.id - 1);
         state.screen = SCREEN_PLAY;
@@ -266,18 +723,18 @@ function openGiver(npc) {
       },
     },
     {
-      label: 'Not yet.', secondary: true,
+      label: t('main.notYet'), secondary: true,
       fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); },
     },
   ];
-  ui.showDialog(npc.name, `Got work for you, ${activeCharacter(state).name}. ${next.title} — ${next.brief} Pays $${next.reward}.`, state.dialogOptions);
+  ui.showDialog(npc.name, t('main.gotWork', { name: activeCharacter(state).name, title: missionTitle(next), brief: missionBrief(next), reward: next.reward }), state.dialogOptions);
 }
 
 function openSideJob(quest) {
   state.screen = SCREEN_DIALOG;
   state.dialogOptions = [
     {
-      label: `Take the job ($${quest.reward})`,
+      label: t('main.takeJob', { reward: quest.reward }),
       fn: () => {
         startSideQuest(state, quest);
         state.screen = SCREEN_PLAY;
@@ -285,7 +742,7 @@ function openSideJob(quest) {
         playSfx('mission');
       },
     },
-    { label: 'Maybe later.', secondary: true, fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } },
+    { label: t('main.maybeLater'), secondary: true, fn: () => { state.screen = SCREEN_PLAY; ui.hideAll(); } },
   ];
   ui.showDialog(quest.giver, `${quest.title} — ${quest.brief}`, state.dialogOptions);
 }
@@ -301,7 +758,7 @@ function handleInteract() {
   } else if (target.kind === 'activity') {
     const kind = target.spot.kind;
     if (kind === 'race') {
-      if (!startRaceChallenge(state)) showMessage(state, 'You need a vehicle to race!');
+      if (!startRaceChallenge(state)) showMessage(state, t('main.needVehicleRace'));
     } else if (kind === 'swim') {
       startSwimChallenge(state);
     } else {
@@ -320,12 +777,12 @@ function handleEnterVehicle() {
     playSfx('click');
     return;
   }
-  const v = nearestVehicle(state, 70);
+  const v = nearestVehicle(state, 12);
   if (!v) return;
   if (v.owner === 'traffic') {
     const policeNear = state.police.some((p) => Math.hypot(p.x - v.x, p.y - v.y) < 420);
-    if (policeNear || Math.random() < 0.4) addWanted(state, 1, 'Car stolen in plain sight');
-    else showMessage(state, 'Car stolen — nobody saw.');
+    if (policeNear || Math.random() < 0.4) addWanted(state, 1, t('main.carStolenSeen'));
+    else showMessage(state, t('main.carStolenUnseen'));
     state.stats.stolen += 1;
   }
   enterVehicle(state, v);
@@ -342,22 +799,32 @@ function stepPlay(dt, input) {
     return;
   }
   advanceClock(state, dt);
-  const ePressed = input.pressed('KeyE');
-  const fPressed = input.pressed('KeyF');
-  const qPressed = input.pressed('KeyQ');
-  const gPressed = input.pressed('KeyG');
+  // v4 Settings: an explicit day/night choice pins the clock — 'auto'
+  // lets it run, 'day' holds morning, 'night' holds evening.
+  if (settings.time.dayNight === 'day' && isNight(state)) state.time.minutes = 10 * 60;
+  if (settings.time.dayNight === 'night' && !isNight(state)) state.time.minutes = 20 * 60;
+  // v4 Settings: an explicit weather choice pins the rain — 'auto'
+  // follows the season, 'rain' forces a downpour, 'clear' forces dry.
+  if (settings.time.weather === 'rain') state.rain = Math.max(state.rain, 0.7);
+  if (settings.time.weather === 'clear') state.rain = Math.min(state.rain, 0.05);
+  const ePressed = input.pressedAction('interact');
+  const fPressed = input.pressedAction('enterVehicle');
+  const qPressed = input.pressedAction('pickpocket');
+  const gPressed = input.pressedAction('park');
   if (ePressed) handleInteract();
   if (fPressed) handleEnterVehicle();
   // M toggles the map in the frame loop (main.js), not here: while the map
   // is open stepPlay never runs, so a toggle here could never close it.
   if (gPressed && state.playerVehicle) {
     const hero = activeCharacter(state);
-    if (Math.hypot(hero.x - 560, hero.y - 1620) < 220) storeCurrentCar(state);
-    else showMessage(state, 'Park near the safe house to store this car.');
+    // v4 meter scale: park within 30 m of the safe house (v3: 220).
+    if (Math.hypot(hero.x - 560, hero.y - 1620) < 30) storeCurrentCar(state);
+    else showMessage(state, t('main.parkNear'));
   }
   if (qPressed) {
     const hero = activeCharacter(state);
-    const near = state.npcs.find((n) => n.kind === 'ped' && Math.hypot(n.x - hero.x, n.y - hero.y) < 60);
+    // v4 meter scale: pickpocket at arm's reach, ~2.5 m (v3: 60).
+    const near = state.npcs.find((n) => n.kind === 'ped' && Math.hypot(n.x - hero.x, n.y - hero.y) < 2.5);
     if (near) pickpocket(state, near);
   }
 
@@ -377,10 +844,14 @@ function stepPlay(dt, input) {
       clearNav(state);
     } else {
       const remaining = navRemaining(state);
+      // v4 meter-scale note: 90 m arrival is kept on purpose (see
+      // checkReach in missions.js) — mission targets sit inside blocks
+      // up to ~40 m from roads, so a realistic 10 m radius could strand
+      // arrivals behind building walls.
       if (remaining < 90) {
         const label = state.nav.label;
         clearNav(state);
-        showMessage(state, `Arrived at ${label}.`);
+        showMessage(state, t('main.arrived', { label }));
         playSfx('mission');
       } else {
         state.navRepath = (state.navRepath || 0) + dt;
@@ -403,13 +874,20 @@ function stepPlay(dt, input) {
 
   // Prompt line under the HUD.
   const target = nearestInteractable(state, world);
-  const vehicle = state.playerVehicle ? null : nearestVehicle(state, 70);
-  state.prompt = target ? `E — ${target.label}` : vehicle ? `F — Enter ${vehicle.name} (${vehicle.kind})` : null;
+  // v4 meter scale: step into a car from beside it (v3: 70). The check
+  // is centre-based and cars are still 46 u long (vehicles.js, Builder A)
+  // with half-width 11 — 12 m means "standing at the door" today, and
+  // should drop to ~3 m once cars are rescaled to ~4.5 m long.
+  const vehicle = state.playerVehicle ? null : nearestVehicle(state, 12);
+  const bindings = getBindings();
+  state.prompt = target
+    ? t('main.prompt', { key: keyDisplay(bindings.interact), label: target.label })
+    : vehicle ? t('main.prompt', { key: keyDisplay(bindings.enterVehicle), label: t('main.enterVehicle', { name: vehicle.name, kind: vehicle.kind }) }) : null;
 
   const hero = activeCharacter(state);
   if (hero.hp <= 0) {
     state.screen = SCREEN_OVER;
-    ui.showOver(`${hero.name} got taken down in ${state.unlocked[2] ? 'Cinder Peaks' : state.unlocked[1] ? 'Sunset Beach' : 'Downtown'}. The crew will remember this one.`);
+    ui.showOver(t('main.takenDown', { name: hero.name, district: state.unlocked[2] ? t('district.peaks') : state.unlocked[1] ? t('district.beach') : t('district.downtown') }));
     playSfx('wanted');
   }
 
@@ -422,9 +900,7 @@ function stepPlay(dt, input) {
       const now = (typeof performance !== 'undefined' ? performance.now() : 0) / 1000;
       if (!state.barrierMsgAt || now - state.barrierMsgAt > 4) {
         state.barrierMsgAt = now;
-        showMessage(state, bd === 1
-          ? 'Sunset Beach is locked — finish Main Mission 20 to open the gate.'
-          : 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.', 3);
+        showMessage(state, bd === 1 ? t('map.lockedBeach') : t('map.lockedPeaks'), 3);
       }
     }
   }
@@ -453,9 +929,62 @@ function runShot(name) {
   requestAnimationFrame(paint);
 }
 
+// --- v4 audio directors (called on a 0.25 s tick from the frame loop) -----
+let audioDirTimer = 0;
+let autosaveTimer = 0;
+let lastMusicMode = null;
+let lastAmbienceKind = null;
+let lastSirenOn = false;
+
+function updateAudioDirectors() {
+  const hero = activeCharacter(state);
+  const district = districtAt(hero.x, hero.y);
+  // Music: the title menu has its own loop; on foot the district decides;
+  // in a car the radio station decides.
+  let mode = 'menu';
+  if (state.screen === SCREEN_PLAY || state.screen === SCREEN_ACTIVITY) {
+    mode = state.playerVehicle
+      ? `radio${getRadioChannel()}`
+      : district === 1 ? 'beach' : district === 2 ? 'peaks' : 'downtown';
+  }
+  if (mode !== lastMusicMode) {
+    lastMusicMode = mode;
+    setMusic(mode);
+  }
+  // Ambience: rain wins over everything; at night the city goes quiet
+  // (night ambience + crickets) instead of the daytime traffic hum.
+  const ambience = state.rain > 0.4 ? 'rain'
+    : isNight(state) ? 'night'
+    : district === 1 ? 'beach' : district === 2 ? 'peaks' : 'city';
+  if (ambience !== lastAmbienceKind) {
+    lastAmbienceKind = ambience;
+    setAmbience(ambience);
+  }
+  // Engine: pitch follows the driven vehicle's speed (0 when on foot).
+  const v = state.playerVehicle;
+  setEngine(!!v, v ? Math.abs(v.speed || 0) / (v.cruise || 40) : 0);
+  // Siren: wails while wanted and a police unit is close.
+  let sirenOn = false;
+  let sirenDist01 = 1;
+  if (state.wanted > 0) {
+    let best = Infinity;
+    for (const p of state.police) best = Math.min(best, Math.hypot(p.x - hero.x, p.y - hero.y));
+    if (best < 150) {
+      sirenOn = true;
+      sirenDist01 = best / 150;
+    }
+  }
+  if (sirenOn !== lastSirenOn) {
+    lastSirenOn = sirenOn;
+    setSiren(sirenOn, sirenDist01);
+  } else if (sirenOn) {
+    setSiren(true, sirenDist01);
+  }
+}
+
 function runGame() {
   buildEntities();
-  const input = createInput(canvas);
+  input = createInput(canvas);
   let screen = SCREEN_TITLE;
   let accumulator = 0;
   let last = performance.now();
@@ -476,12 +1005,26 @@ function runGame() {
       fpsWindowStart = now;
     }
     // v2 camera orbit: drag orbits, wheel zooms (drag up raises the camera).
+    // v4 backpack: while the bag is open the wheel cycles weapons instead
+    // of zooming, and dragging does not orbit — the panel owns the input.
     const orbit = input.takeOrbit();
+    if (state.backpackOpen) {
+      if (orbit.wheel !== 0) {
+        cycleWeapon(state, orbit.wheel > 0 ? 1 : -1);
+        refreshBackpackPanel();
+      }
+      orbit.dx = 0;
+      orbit.dy = 0;
+      orbit.wheel = 0;
+    }
     if (orbit.dx !== 0 || orbit.dy !== 0 || orbit.wheel !== 0) {
-      state.camera.yaw -= orbit.dx * 0.005;
+      // v4 Settings: camera sensitivity scales the orbit, invert Y flips it.
+      const sens = settings.controls.sensitivity;
+      const invert = settings.controls.invertY ? -1 : 1;
+      state.camera.yaw -= orbit.dx * 0.005 * sens;
       state.camera.pitch = Math.max(
         CAMERA_PITCH_MIN,
-        Math.min(CAMERA_PITCH_MAX, state.camera.pitch - orbit.dy * 0.003),
+        Math.min(CAMERA_PITCH_MAX, state.camera.pitch - orbit.dy * 0.003 * sens * invert),
       );
       state.camera.dist = Math.max(
         CAMERA_MIN_DIST,
@@ -491,12 +1034,47 @@ function runGame() {
     // Positional audio follows the hero; the minigame overlay hides off-activity.
     const heroNow = activeCharacter(state);
     setListenerPosition(heroNow.x, heroNow.y);
+    // v4: the 3D figure wears the active weapon on its back (player.js
+    // reads char.weaponKey) — keep it in step with the backpack's choice.
+    heroNow.weaponKey = state.weapon;
     if (state.screen !== SCREEN_ACTIVITY) hideActivityCanvas();
-    // The HUD map button only shows during play.
+    // v4: the HUD map button only shows during play.
     const wantMapBtn = state.screen === SCREEN_PLAY;
     if (wantMapBtn !== btnMapShown) {
       btnMapShown = wantMapBtn;
       if (btnMapEl) btnMapEl.style.display = wantMapBtn ? '' : 'none';
+    }
+    // v4: the HUD backpack button shows next to it, same rule.
+    if (wantMapBtn !== btnBackpackShown) {
+      btnBackpackShown = wantMapBtn;
+      if (btnBackpackEl) btnBackpackEl.style.display = wantMapBtn ? '' : 'none';
+    }
+    // v4 audio/settings: the mute + settings HUD buttons, same rule.
+    if (wantMapBtn !== btnMuteShown) {
+      btnMuteShown = wantMapBtn;
+      if (btnMuteEl) btnMuteEl.style.display = wantMapBtn ? '' : 'none';
+    }
+    if (wantMapBtn !== btnSettingsShown) {
+      btnSettingsShown = wantMapBtn;
+      if (btnSettingsEl) btnSettingsEl.style.display = wantMapBtn ? '' : 'none';
+    }
+    // v4 audio: music / ambience / engine / siren follow the world —
+    // updated on a 0.25 s tick, not every frame, so the mixer is never
+    // poked 60 times a second.
+    audioDirTimer += elapsed;
+    if (audioDirTimer >= 0.25) {
+      audioDirTimer = 0;
+      updateAudioDirectors();
+    }
+    // v4 Settings: autosave while playing (interval from Settings).
+    if (state.screen === SCREEN_PLAY && settings.save.autosave) {
+      autosaveTimer += elapsed;
+      if (autosaveTimer >= settings.save.autosaveMinutes * 60) {
+        autosaveTimer = 0;
+        saveGame(state);
+      }
+    } else {
+      autosaveTimer = 0;
     }
     if (state.screen === SCREEN_PLAY) ui.showOrbitHintOnce();
     const actions = input.takeActions();
@@ -512,27 +1090,33 @@ function runGame() {
         }
         state.screen = SCREEN_PLAY;
         ui.hideAll();
-        announce('Playing. Talk to Rico at the Neon Diner.');
+        announce(t('main.playing'));
         // A Space/Enter tap that started the game must not also jump or
         // fire the moment play begins.
         input.clearStaleEdges();
       }
     }
     if (actions & ACTION_PAUSE) {
-      if (state.showMap) {
+      if (settingsOpen) {
+        // Esc / P closes Settings first — it never opens pause from behind it.
+        closeSettings();
+      } else if (state.showMap) {
         // Esc / P closes the map first — it never opens the pause menu
         // from behind the map.
         closeMap();
+      } else if (state.backpackOpen) {
+        // v4: Esc / P closes the backpack first, same as the map.
+        closeBackpack();
       } else if (state.screen === SCREEN_PLAY) {
         state.screen = SCREEN_PAUSED;
         ui.showPause();
-        announce('Paused.');
+        announce(t('main.paused'));
         // The Escape/P tap that paused must not leak into play after resume.
         input.clearStaleEdges();
       } else if (state.screen === SCREEN_PAUSED) {
         state.screen = SCREEN_PLAY;
         ui.hideAll();
-        announce('Playing.');
+        announce(t('main.resumed'));
         input.clearStaleEdges();
       }
       // Any other screen (activity, shop, dialog, ...) keeps the Escape
@@ -553,13 +1137,32 @@ function runGame() {
       input.clearStaleEdges();
     } else if (state.screen === SCREEN_PLAY || state.screen === SCREEN_ACTIVITY) {
       // M toggles the map (open or close) from play.
-      if (state.screen === SCREEN_PLAY && input.pressed('KeyM')) toggleMap();
-      if (state.showMap) {
-        // The map is open: the world is truly paused — no stepping, no
-        // clock, no movement. The frame only paints the frozen scene
-        // behind the DOM map panel, and drops any input that arrives.
+      if (state.screen === SCREEN_PLAY && input.pressedAction('map')) toggleMap();
+      // v4: B toggles the backpack (open or close) from play — the touch
+      // BAG button raises the same edge (input.js).
+      if (state.screen === SCREEN_PLAY && input.pressedAction('backpack')) toggleBackpack();
+      // v4 audio: N mutes / unmutes everything; V cycles the car radio
+      // while driving (the station name toasts).
+      if (input.pressedAction('mute')) toggleMute();
+      if (state.screen === SCREEN_PLAY && state.playerVehicle && input.pressedAction('radio')) {
+        const station = cycleRadio();
+        playSfx('click');
+        showMessage(state, t('main.radio', { station }));
+      }
+      if (state.showMap || state.backpackOpen) {
+        // The map / backpack is open: the world is truly paused — no
+        // stepping, no clock, no movement. The frame only paints the
+        // frozen scene behind the DOM panel, and drops any input that
+        // arrives. Digits still switch weapons while the bag is open.
         accumulator = 0;
         input.takeOrbit();
+        if (state.backpackOpen) {
+          for (let i = 0; i < WEAPON_ORDER.length; i += 1) {
+            if (input.pressed(`Digit${i + 1}`)) {
+              if (switchWeapon(state, WEAPON_ORDER[i])) refreshBackpackPanel();
+            }
+          }
+        }
         input.clearStaleEdges();
         input.endFrame();
         renderer.draw(state, world, state.screen, now / 1000);
@@ -591,17 +1194,23 @@ function runGame() {
     if (document.hidden && state.screen === SCREEN_PLAY) {
       state.screen = SCREEN_PAUSED;
       ui.showPause();
-      announce('Paused.');
+      announce(t('main.paused'));
     }
   });
 
-  announce('Neon Bay. Press Enter or click to start.');
+  announce(t('main.titleHint'));
   requestAnimationFrame(frame);
 }
 
 // Debug hook for automated play-testing (read-only from the page's own tests).
 window.__neonBay = {
   get state() { return state; },
+  // Project a screen point to the ground plane (renderer raycast) — the
+  // same projection the shooting aim uses, exposed for tests/debugging.
+  screenToGround(x, y) {
+    return (renderer && typeof renderer.screenToGround === 'function')
+      ? renderer.screenToGround(x, y) : null;
+  },
   get fps() { return fpsValue; },
   world,
   seed,
@@ -624,7 +1233,66 @@ window.__neonBay = {
     get view() { return mapCtl.view; },
   },
   startMission: (i) => startMainMission(state, i),
+  // v4 backpack debug API for automated tests (read-only except select).
+  backpack: {
+    open: openBackpack,
+    close: closeBackpack,
+    toggle: toggleBackpack,
+    get isOpen() { return state.backpackOpen; },
+    items: () => backpackItems(state),
+    select: (key) => {
+      const ok = switchWeapon(state, key);
+      if (ok) refreshBackpackPanel();
+      return ok;
+    },
+    cycle: (dir) => {
+      const key = cycleWeapon(state, dir);
+      refreshBackpackPanel();
+      return key;
+    },
+  },
+  // v4 audio debug API (Tone.js engine, buses, loops, music, radio).
+  audio: {
+    state: () => getAudioState(),
+    setMusic: (mode) => setMusic(mode),
+    setAmbience: (kind) => setAmbience(kind),
+    setEngine: (on, speed01) => setEngine(on, speed01),
+    setSiren: (on, dist01) => setSiren(on, dist01),
+    test: (cat) => playTest(cat),
+    toggleMute,
+    cycleRadio: () => cycleRadio(),
+  },
+  // v4 settings debug API (read-only except apply/reset).
+  settings: {
+    get: () => JSON.parse(JSON.stringify(settings)),
+    apply: (patch) => {
+      settings = mergeSettingsPatch(patch);
+      persistSettings();
+      applySettings();
+      return settings;
+    },
+    open: openSettings,
+    close: closeSettings,
+    get isOpen() { return settingsOpen; },
+    slots: () => listSaveSlots(),
+  },
+  // Cross-builder hook registry (Builders A/B assign their hooks here).
+  hooks: window.__neonBayHooks,
 };
+
+function mergeSettingsPatch(patch) {
+  // Deep-merge a partial patch onto the live settings, then run the
+  // result through the validator (clamps + whitelists) from state.js.
+  const merged = JSON.parse(JSON.stringify(settings));
+  const deep = (dst, src) => {
+    for (const [k, v] of Object.entries(src || {})) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && dst[k] && typeof dst[k] === 'object') deep(dst[k], v);
+      else dst[k] = v;
+    }
+  };
+  deep(merged, patch);
+  return validateSettings(merged);
+}
 
 if (shot) runShot(shot);
 else runGame();

@@ -8,7 +8,9 @@
 // the path turns onto a new street. Nobody cuts through blocks, parks or
 // buildings, and nobody wanders at random. Stationary NPCs (givers,
 // shopkeepers) never move. Fleeing pedestrians run along the sidewalks too.
+import { DENSITY_LEVELS, DEFAULT_DENSITY } from './config.js';
 import { DIALOGUE_GREETINGS, DIALOGUE_TIPS, MAYA_LINES, NPC_NAMES } from './data.js';
+import { addStrings, t } from './i18n.js';
 import { activeCharacter, addMoney, addWanted } from './state.js';
 import { districtAt } from './world.js';
 import { hairMat, pantsMat, shoeMat, skinMat, stdMat } from './textures.js';
@@ -17,12 +19,28 @@ const PED_COLORS = ['#f59e0b', '#22c55e', '#a855f7', '#14b8a6', '#f97316', '#e2e
 const SKIN_TONES = [0xe8b98a, 0xc98e5f, 0x8d5524, 0xf2c89b];
 const HAIR_COLORS = [0x1f2937, 0x3b1f1a, 0x6b7280, 0xb45309, 0x111827];
 
-function makePed(rng, x, y) {
+// --- i18n (Builder C owns game/src/i18n.js: t, addStrings, setLang,
+// getLang). NPC dialogue lines themselves live in data.js (outside this
+// build's scope) and are already English; their Indonesian translations
+// belong to the data.js owner.
+const NPC_STRINGS_EN = {
+  'npc.lifted': 'Lifted {take} from {name}',
+  'npc.caughtStealing': '{name} caught you stealing',
+};
+const NPC_STRINGS_ID = {
+  'npc.lifted': 'Mencopet {take} dari {name}',
+  'npc.caughtStealing': '{name} memergokimu mencuri',
+};
+addStrings('en', NPC_STRINGS_EN);
+addStrings('id', NPC_STRINGS_ID);
+
+function makePed(rng, x, y, z = 0) {
   return {
     kind: 'ped',
     name: rng.pick(NPC_NAMES),
-    x, y, angle: rng.range(0, Math.PI * 2),
-    speed: 45 + rng.next() * 30,
+    x, y, z, angle: rng.range(0, Math.PI * 2),
+    // Walking speed in m/s: a relaxed stroll is ~1.2-1.8 m/s.
+    speed: 1.2 + rng.next() * 0.6,
     money: 10 + Math.floor(rng.next() * 90),
     color: rng.pick(PED_COLORS),
     skin: rng.pick(SKIN_TONES),
@@ -38,22 +56,24 @@ function makePed(rng, x, y) {
 
 export function spawnNpcs(state, world, rng) {
   const list = [];
-  // The map is ~3x the v2 area, so the crowds grow with it.
-  for (let i = 0; i < 60; i += 1) {
+  // Crowd size follows the density setting (config.js DENSITY_LEVELS);
+  // 'high' is the v4 default: 85 downtown, 32 beach, 23 peaks.
+  const density = DENSITY_LEVELS[state.densityLevel] || DENSITY_LEVELS[DEFAULT_DENSITY];
+  for (let i = 0; i < density.peds[0]; i += 1) {
     const p = world.randomSidewalkPoint(0);
-    list.push(makePed(rng, p.x, p.y));
+    list.push(makePed(rng, p.x, p.y, p.z || 0));
   }
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < density.peds[1]; i += 1) {
     const p = world.randomSidewalkPoint(1);
-    list.push(makePed(rng, p.x, p.y));
+    list.push(makePed(rng, p.x, p.y, p.z || 0));
   }
-  for (let i = 0; i < 12; i += 1) {
+  for (let i = 0; i < density.peds[2]; i += 1) {
     const p = world.randomSidewalkPoint(2);
-    list.push(makePed(rng, p.x, p.y));
+    list.push(makePed(rng, p.x, p.y, p.z || 0));
   }
   for (const shop of world.shops) {
     list.push({
-      kind: 'shopkeeper', name: rng.pick(NPC_NAMES), x: shop.x + 45, y: shop.y + 35,
+      kind: 'shopkeeper', name: rng.pick(NPC_NAMES), x: shop.x + 3, y: shop.y + 2.5,
       angle: Math.PI / 2, speed: 0, money: 0, color: '#f8fafc', state: 'idle',
       shopId: shop.id, hp: 100,
     });
@@ -74,9 +94,60 @@ export function spawnNpcs(state, world, rng) {
   state.npcs = list;
 }
 
+function fallbackRng() {
+  return {
+    next: () => Math.random(),
+    range: (a, b) => a + Math.random() * (b - a),
+    pick: (arr) => arr[Math.floor(Math.random() * arr.length)],
+    chance: (p) => Math.random() < p,
+  };
+}
+
+/** Settings hook: set the walking-pedestrian density live ('low' |
+ * 'medium' | 'high', see config.js DENSITY_LEVELS). Extra peds are removed
+ * (walking peds only — givers, shopkeepers and friends stay); missing peds
+ * are spawned on sidewalks across all three districts. Called by
+ * applyDensity (vehicles.js) and directly by the Settings menu.
+ * rng is optional: without one a Math.random shim is used. */
+export function applyPedDensity(level, state, world, rng) {
+  const density = DENSITY_LEVELS[level] || DENSITY_LEVELS[DEFAULT_DENSITY];
+  if (!state.npcs) return density;
+  const r = rng || fallbackRng();
+  // Remove excess PER DISTRICT, not just the total: trimming from the end
+  // of the list would empty the peaks/beach first and leave downtown over
+  // target, and the per-district spawn below would then add the missing
+  // districts back on top — 'low' would end up at 86 peds, not 63.
+  const counts = [0, 0, 0];
+  for (const n of state.npcs) {
+    if (n.kind === 'ped') counts[districtAt(n.x, n.y)] += 1;
+  }
+  for (let d = 0; d < 3; d += 1) {
+    let over = counts[d] - density.peds[d];
+    if (over <= 0) continue;
+    for (let i = state.npcs.length - 1; i >= 0 && over > 0; i -= 1) {
+      if (state.npcs[i].kind === 'ped' && districtAt(state.npcs[i].x, state.npcs[i].y) === d) {
+        state.npcs.splice(i, 1);
+        over -= 1;
+      }
+    }
+  }
+  // Re-count after the removal (counts above are pre-removal).
+  counts[0] = 0; counts[1] = 0; counts[2] = 0;
+  for (const n of state.npcs) {
+    if (n.kind === 'ped') counts[districtAt(n.x, n.y)] += 1;
+  }
+  for (let d = 0; d < 3; d += 1) {
+    for (let i = counts[d]; i < density.peds[d]; i += 1) {
+      const p = world.randomSidewalkPoint(d);
+      state.npcs.push(makePed(r, p.x, p.y, p.z || 0));
+    }
+  }
+  return density;
+}
+
 function nearestBullet(state, npc) {
   for (const b of state.bullets) {
-    if (Math.hypot(b.x - npc.x, b.y - npc.y) < 130) return true;
+    if (Math.hypot(b.x - npc.x, b.y - npc.y) < 18) return true;
   }
   return false;
 }
@@ -98,7 +169,7 @@ function pickNewPath(state, world, npc, rng, minDist = 0) {
     const node = world.graph.randomNode(rng, allowed);
     if (!node) return false;
     if (minDist > 0 && Math.hypot(node.x - npc.x, node.y - npc.y) < minDist) continue;
-    const nodePath = world.graph.findPath(npc.x, npc.y, node.x, node.y, state.unlocked);
+    const nodePath = world.graph.findPath(npc.x, npc.y, node.x, node.y, state.unlocked, { allowElevated: false, z1: npc.z || 0 });
     if (!nodePath || nodePath.length < 2) continue;
     const waypoints = world.graph.sidewalkWaypoints(nodePath, { x: npc.x, y: npc.y });
     if (waypoints.length === 0) continue;
@@ -129,7 +200,7 @@ function pickNewPath(state, world, npc, rng, minDist = 0) {
         const dB = Math.hypot(start.x - seg.bx, start.y - seg.by);
         join = world.graph.sidewalkPoint(seg, dA <= dB ? 0 : 1, side);
       }
-      if (Math.hypot(join.x - npc.x, join.y - npc.y) > 12) waypoints.unshift(join);
+      if (Math.hypot(join.x - npc.x, join.y - npc.y) > 0.6) waypoints.unshift(join);
     }
     npc.path = waypoints;
     npc.pathIdx = 0;
@@ -145,8 +216,11 @@ function followPath(state, world, npc, dt, speed) {
   const dx = wp.x - npc.x;
   const dy = wp.y - npc.y;
   const d = Math.hypot(dx, dy);
-  if (d < 10) {
+  if (d < 0.6) {
     npc.pathIdx += 1;
+    // Sidewalk waypoints carry the road elevation (hill roads climb), so
+    // the pedestrian rides the slope instead of floating or sinking.
+    if (wp.z !== undefined) npc.z = wp.z;
     return npc.pathIdx >= npc.path.length;
   }
   npc.angle = Math.atan2(dy, dx);
@@ -155,10 +229,12 @@ function followPath(state, world, npc, dt, speed) {
   const ny = npc.y + (dy / d) * step;
   // Sidewalk waypoints never enter a solid, but a peaks cabin can sit on a
   // path: slide along it, and give up if truly stuck.
-  const movedX = !world.collides(nx, npc.y, 12, state.unlocked);
-  const movedY = !world.collides(npc.x, ny, 12, state.unlocked);
+  const movedX = !world.collides(nx, npc.y, 0.6, state.unlocked);
+  const movedY = !world.collides(npc.x, ny, 0.6, state.unlocked);
   if (movedX) npc.x = nx;
   if (movedY) npc.y = ny;
+  // Ride the sidewalk elevation as the pedestrian walks (hill roads).
+  if (wp.z !== undefined) npc.z = (npc.z || 0) + (wp.z - (npc.z || 0)) * Math.min(1, dt * 6);
   if (!movedX && !movedY) {
     npc.stuckTimer += dt;
     if (npc.stuckTimer > 2) {
@@ -177,8 +253,8 @@ export function updateNpcs(state, world, dt, rng) {
   for (const npc of state.npcs) {
     if (npc.kind !== 'ped') continue;
     if (npc.state === 'flee') {
-      const done = followPath(state, world, npc, dt, 170);
-      if (done || Math.hypot(hero.x - npc.x, hero.y - npc.y) > 420) {
+      const done = followPath(state, world, npc, dt, 4.5);
+      if (done || Math.hypot(hero.x - npc.x, hero.y - npc.y) > 60) {
         npc.state = 'walk';
         npc.path = null;
         npc.waitTimer = rng.range(0, 2);
@@ -188,7 +264,7 @@ export function updateNpcs(state, world, dt, rng) {
     if (nearestBullet(state, npc) || state.wanted >= 3) {
       npc.state = 'flee';
       // Run away along the sidewalks, not in a straight line through walls.
-      if (!pickNewPath(state, world, npc, rng, 350)) {
+      if (!pickNewPath(state, world, npc, rng, 60)) {
         npc.state = 'walk';
         npc.path = null;
       }
@@ -227,17 +303,17 @@ export function pickpocket(state, npc) {
   if (npc.kind !== 'ped') return false;
   const hero = activeCharacter(state);
   const dist = Math.hypot(npc.x - hero.x, npc.y - hero.y);
-  if (dist > 60) return false;
-  const seen = Math.random() < 0.35 || state.police.some((p) => Math.hypot(p.x - hero.x, p.y - hero.y) < 300);
+  if (dist > 3) return false;
+  const seen = Math.random() < 0.35 || state.police.some((p) => Math.hypot(p.x - hero.x, p.y - hero.y) < 40);
   if (Math.random() < 0.7 && !seen) {
     const take = Math.min(npc.money, 10 + Math.floor(Math.random() * 70));
     npc.money -= take;
     state.stats.stolen += take;
-    addMoney(state, take, `Lifted $${take} from ${npc.name}`);
+    addMoney(state, take, t('npc.lifted', { take: `$${take}`, name: npc.name }));
     npc.state = 'flee';
     return true;
   }
-  addWanted(state, 1, `${npc.name} caught you stealing`);
+  addWanted(state, 1, t('npc.caughtStealing', { name: npc.name }));
   npc.state = 'flee';
   return false;
 }
@@ -280,10 +356,12 @@ function shirtMaterial(T, color) {
 }
 
 /**
- * Pedestrian, ~29 tall, facing +X, in human proportions: shoes, legs on
- * hip pivots, arms on shoulder pivots that swing while walking, shirt,
- * skin-toned head with hair (short, or long down the back for Maya and
- * some passers-by). Shirt, skin and hair vary per person.
+ * Pedestrian, 1.8 m tall, facing +X, in human proportions: shoes, legs on
+ * hip pivots (0.82 m), arms on shoulder pivots (1.45 m) that swing while
+ * walking, shirt, skin-toned head with hair (short, or long down the back
+ * for Maya and some passers-by). Shirt, skin and hair vary per person.
+ * (v4: 1 unit = 1 m, Leo Vance is 1.8 m — the same scale as the cars and
+ * the roads. The old figure was ~29 units tall.)
  */
 function buildPedFigure(T, npc) {
   if (!T) return dummyObj();
@@ -295,33 +373,33 @@ function buildPedFigure(T, npc) {
   const shirt = shirtMaterial(T, npc.color || '#e2e8f0');
   function leg(pz) {
     const pivot = new T.Group();
-    pivot.position.set(0, 9, pz);
-    pivot.add(box3(T, 6, 9, 5, pants, 0, -4.5, 0));
-    pivot.add(box3(T, 6, 2.5, 8, shoes, 1, -9.5, 0));
+    pivot.position.set(0, 0.82, pz);
+    pivot.add(box3(T, 0.16, 0.82, 0.16, pants, 0, -0.41, 0));
+    pivot.add(box3(T, 0.28, 0.08, 0.16, shoes, 0.05, -0.78, 0));
     g.add(pivot);
     return pivot;
   }
   function arm(pz) {
     const pivot = new T.Group();
-    pivot.position.set(0, 20, pz);
-    pivot.add(box3(T, 4, 9, 4, shirt, 0, -4.5, 0));
-    pivot.add(box3(T, 3.5, 2.5, 3.5, skin, 0, -10, 0));
+    pivot.position.set(0, 1.45, pz);
+    pivot.add(box3(T, 0.11, 0.55, 0.11, shirt, 0, -0.275, 0));
+    pivot.add(box3(T, 0.09, 0.08, 0.09, skin, 0, -0.58, 0));
     g.add(pivot);
     return pivot;
   }
-  const legL = leg(-3.5);
-  const legR = leg(3.5);
-  const armL = arm(-8.5);
-  const armR = arm(8.5);
-  const body = box3(T, 9, 12, 14, shirt, 0, 15, 0);
-  const head = box3(T, 8, 8, 8, skin, 0, 25, 0);
-  const hairTop = box3(T, 8.6, 2.2, 8.6, hair, -0.3, 29.4, 0);
+  const legL = leg(-0.09);
+  const legR = leg(0.09);
+  const armL = arm(-0.26);
+  const armR = arm(0.26);
+  const body = box3(T, 0.2, 0.6, 0.42, shirt, 0, 1.18, 0);
+  const head = box3(T, 0.22, 0.24, 0.22, skin, 0, 1.62, 0);
+  const hairTop = box3(T, 0.24, 0.06, 0.24, hair, -0.01, 1.76, 0);
   g.add(body);
   g.add(head);
   g.add(hairTop);
   if (npc.hair === 'long') {
     // Long hair down the back (-X side, behind the face).
-    g.add(box3(T, 2.6, 11, 8.6, hair, -4.4, 24, 0));
+    g.add(box3(T, 0.07, 0.3, 0.24, hair, -0.12, 1.62, 0));
   }
   g.userData = { legL, legR, armL, armR, body, shirtMat: shirt };
   return g;
@@ -335,7 +413,7 @@ export function drawNpcs(pool, state, time) {
   const T = three();
   state.npcs.forEach((npc, i) => {
     const mesh = pool.get(`npc-${i}`, () => buildPedFigure(T, npc));
-    mesh.position.set(npc.x, 0, npc.y);
+    mesh.position.set(npc.x, npc.z || 0, npc.y);
     mesh.rotation.y = -npc.angle;
     mesh.visible = true;
     const ud = mesh.userData || {};
@@ -357,11 +435,11 @@ export function drawNpcs(pool, state, time) {
       const mark = pool.get(`npc-mark-${i}`, () => {
         if (!T) return dummyObj();
         return new T.Mesh(
-          new T.OctahedronGeometry(9),
+          new T.OctahedronGeometry(0.35),
           new T.MeshLambertMaterial({ color: 0xfde047, emissive: 0xfde047, emissiveIntensity: 0.4 }),
         );
       });
-      mark.position.set(npc.x, 44 + Math.sin(time * 4) * 3, npc.y);
+      mark.position.set(npc.x, 2.1 + Math.sin(time * 4) * 0.1, npc.y);
       mark.rotation.y = time * 2;
       mark.visible = true;
     }
@@ -370,30 +448,30 @@ export function drawNpcs(pool, state, time) {
 
 function drawNpcs2D(ctx, state, time) {
   for (const npc of state.npcs) {
-    const bob = npc.state === 'walk' ? Math.sin(time * 8 + npc.x) * 1.5 : 0;
+    const bob = npc.state === 'walk' ? Math.sin(time * 8 + npc.x) * 0.05 : 0;
     ctx.save();
     ctx.translate(npc.x, npc.y + bob * 0.2);
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(0, 9, 11, 5, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0.3, 0.35, 0.16, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = npc.color;
     ctx.beginPath();
-    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.arc(0, 0, 0.35, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#e8b98a';
     ctx.beginPath();
-    ctx.arc(Math.cos(npc.angle) * 2, Math.sin(npc.angle) * 2, 6, 0, Math.PI * 2);
+    ctx.arc(Math.cos(npc.angle) * 0.07, Math.sin(npc.angle) * 0.07, 0.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     if (npc.kind === 'giver') {
       ctx.fillStyle = '#fde047';
-      ctx.font = 'bold 20px system-ui, sans-serif';
+      ctx.font = 'bold 0.7px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('!', npc.x, npc.y - 22 + Math.sin(time * 4) * 3);
+      ctx.fillText('!', npc.x, npc.y - 0.8 + Math.sin(time * 4) * 0.1);
       ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 11px system-ui, sans-serif';
-      ctx.fillText(npc.name, npc.x, npc.y - 34);
+      ctx.font = 'bold 0.4px system-ui, sans-serif';
+      ctx.fillText(npc.name, npc.x, npc.y - 1.2);
     }
   }
 }

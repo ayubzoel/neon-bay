@@ -21,8 +21,64 @@ import { createWeather } from './weather.js';
 import { drawShopSigns } from './shops.js';
 import { drawActivity, hideActivityCanvas } from './activities.js';
 import { updateNightGlow } from './textures.js';
-import { WEAPONS } from './config.js';
 import { getDestinations, navPathFromPlayer, navRemaining, SYMBOLS } from './map.js';
+import { addStrings, t } from './i18n.js';
+
+// HUD strings for this module (en is the default language; id below).
+// Weapon names are generic type names, so they translate; the objective
+// and prompt lines come from missions.js and are translated there.
+addStrings('en', {
+  'hud.locked': 'LOCKED',
+  'hud.season.summer': 'Summer',
+  'hud.season.rainy': 'Rainy Season',
+  'hud.clock': '{clock} · Day {day} · {season}',
+  'hud.gps': 'GPS ▸ {label} — {dist} m',
+  'hud.webglError': 'WebGL is not available in this browser, so Neon Bay 3D cannot start. Try a browser with hardware acceleration enabled.',
+  'weapon.pistol': 'Pistol',
+  'weapon.rifle': 'Rifle',
+  'weapon.shotgun': 'Shotgun',
+  'weapon.melee': 'Baseball Bat',
+  'weapon.grenade': 'Grenade',
+  'weapon.bazooka': 'Bazooka',
+});
+addStrings('id', {
+  'hud.locked': 'TERKUNCI',
+  'hud.season.summer': 'Musim Panas',
+  'hud.season.rainy': 'Musim Hujan',
+  'hud.clock': '{clock} · Hari {day} · {season}',
+  'hud.gps': 'GPS ▸ {label} — {dist} m',
+  'hud.webglError': 'WebGL tidak tersedia di browser ini, jadi Neon Bay 3D tidak bisa dimulai. Coba browser dengan akselerasi perangkat keras.',
+  'weapon.pistol': 'Pistol',
+  'weapon.rifle': 'Senapan',
+  'weapon.shotgun': 'Senapan Gentel',
+  'weapon.melee': 'Pemukul Bisbol',
+  'weapon.grenade': 'Granat',
+  'weapon.bazooka': 'Bazoka',
+});
+
+/** Display name of the equipped weapon in the active language. */
+function weaponName(id) {
+  return id ? t(`weapon.${id}`) : '';
+}
+
+// Graphics quality levels (Settings hook — Builder C calls
+// applyGraphicsQuality from the Settings menu; it applies immediately,
+// no restart). low: short fog, no blob shadows, half the trees/decor.
+// medium: the v3 look. high: full density, far fog, dpr up to 2.
+export const QUALITY_LEVELS = {
+  low: { dpr: 1, fogNear: 300, fogFar: 1000, far: 1500, density: 0.5, shadows: false },
+  medium: { dpr: 1.5, fogNear: 800, fogFar: 2600, far: 5000, density: 0.8, shadows: true },
+  high: { dpr: 2, fogNear: 1200, fogFar: 4000, far: 8000, density: 1, shadows: true },
+};
+let _qualityLevel = 'high';
+let _qualityApply = null; // set by createRenderer; null until the renderer exists
+export function applyGraphicsQuality(level) {
+  const l = QUALITY_LEVELS[level] ? level : 'medium';
+  _qualityLevel = l;
+  if (_qualityApply) _qualityApply(l);
+  return l;
+}
+export function getGraphicsQuality() { return _qualityLevel; }
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -65,7 +121,7 @@ class MeshPool {
 
 const _coinGeo = new Map();
 function coinMesh(color) {
-  if (!_coinGeo.box) _coinGeo.box = new THREE.BoxGeometry(18, 3, 18);
+  if (!_coinGeo.box) _coinGeo.box = new THREE.BoxGeometry(0.5, 0.08, 0.5);
   if (!_coinGeo[color]) {
     _coinGeo[color] = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 });
   }
@@ -81,23 +137,25 @@ export function createRenderer(canvas) {
     const el = document.getElementById('webglError');
     if (el) {
       el.hidden = false;
-      el.textContent = 'WebGL is not available in this browser, so Neon Bay 3D cannot start. Try a browser with hardware acceleration enabled.';
+      el.textContent = t('hud.webglError');
     }
     return {
       draw() {},
       view,
       screenToGround() { return { x: 0, y: 0 }; },
+      applyGraphicsQuality,
+      getGraphicsQuality,
     };
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUALITY_LEVELS[_qualityLevel].dpr));
   if ('sRGBEncoding' in THREE) renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.shadowMap.enabled = false; // no shadow maps: blob shadows only
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#87b5d6');
-  scene.fog = new THREE.Fog(0x87b5d6, 800, 2600);
-  const camera = new THREE.PerspectiveCamera(55, 1, 1, 5000);
-  camera.position.set(700, 300, 1750);
+  scene.fog = new THREE.Fog(0x87b5d6, QUALITY_LEVELS[_qualityLevel].fogNear, QUALITY_LEVELS[_qualityLevel].fogFar);
+  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, QUALITY_LEVELS[_qualityLevel].far);
+  camera.position.set(700, 20, 1750);
 
   const weather = createWeather(scene);
   const pool = new MeshPool(scene);
@@ -105,6 +163,26 @@ export function createRenderer(canvas) {
   const raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
   let lastTime = null;
+  let lastLightRepaint = -10;
+  let currentWorld = null;
+  let qualityDpr = QUALITY_LEVELS[_qualityLevel].dpr;
+  let shadowsEnabled = QUALITY_LEVELS[_qualityLevel].shadows;
+
+  // Apply a quality level now (renderer/scene/camera) and to the world
+  // once it loads (density). Registered as the module-level hook above.
+  function applyQuality(level) {
+    const q = QUALITY_LEVELS[level];
+    qualityDpr = q.dpr;
+    shadowsEnabled = q.shadows;
+    scene.fog.near = q.fogNear;
+    scene.fog.far = q.fogFar;
+    camera.far = q.far;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
+    resize();
+    if (currentWorld && currentWorld.setVisualDensity) currentWorld.setVisualDensity(q.density);
+  }
+  _qualityApply = applyQuality;
 
   // --- 2D HUD overlay -------------------------------------------------
   const hud = document.getElementById('hud');
@@ -112,7 +190,7 @@ export function createRenderer(canvas) {
   const fonts = new Map();
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const dpr = Math.min(window.devicePixelRatio || 1, qualityDpr);
     view.dpr = dpr;
     view.w = window.innerWidth;
     view.h = window.innerHeight;
@@ -177,7 +255,7 @@ export function createRenderer(canvas) {
         hctx.fillStyle = '#94a3b8';
         hctx.font = 'bold 8px system-ui, sans-serif';
         hctx.textAlign = 'center';
-        hctx.fillText('LOCKED', cx, cy + 18);
+        hctx.fillText(t('hud.locked'), cx, cy + 18);
       }
     }
     hctx.fillStyle = '#0e7490';
@@ -254,7 +332,7 @@ export function createRenderer(canvas) {
     hctx.fillStyle = 'rgba(10,14,22,0.8)';
     hctx.fillRect(12, 12, 250, 86);
     text(`$${state.money.toLocaleString('en-US')}`, 24, 40, 26, '#4ade80', 'left', true);
-    text(`${hero.name}  ·  ${state.weapon ? WEAPONS[state.weapon].name : ''}`, 24, 62, 14, '#e2e8f0');
+    text(`${hero.name}  ·  ${weaponName(state.weapon)}`, 24, 62, 14, '#e2e8f0');
     // HP red bar, armor grey bar.
     hctx.fillStyle = '#1f2937';
     hctx.fillRect(24, 70, 200, 10);
@@ -272,8 +350,8 @@ export function createRenderer(canvas) {
     // Clock, season and day, top-centre — on a dark pill so the white text
     // stays readable against a bright noon sky (tester report: low
     // contrast at 10:15 in daylight).
-    const seasonLabel = state.season === 'rainy' ? 'Rainy Season' : 'Summer';
-    const clockLabel = `${clockText(state)}  ·  Day ${state.time.day}  ·  ${seasonLabel}`;
+    const seasonLabel = state.season === 'rainy' ? t('hud.season.rainy') : t('hud.season.summer');
+    const clockLabel = t('hud.clock', { clock: clockText(state), day: state.time.day, season: seasonLabel });
     hctx.font = `bold 17px ${FONT}`;
     const clockW = hctx.measureText(clockLabel).width;
     hctx.fillStyle = 'rgba(10,14,22,0.78)';
@@ -284,7 +362,7 @@ export function createRenderer(canvas) {
     text(clockLabel, view.w / 2, 32, 17, '#f8fafc', 'center', true);
     // GPS: destination + remaining distance, under the clock.
     if (state.nav) {
-      const gpsLabel = `GPS ▸ ${state.nav.label} — ${navRemaining(state)} m`;
+      const gpsLabel = t('hud.gps', { label: state.nav.label, dist: navRemaining(state) });
       const gpsText = fitText(gpsLabel, 14, Math.min(560, view.w - 40));
       hctx.font = `bold 14px ${FONT}`;
       const gpsW = hctx.measureText(gpsText).width;
@@ -304,7 +382,7 @@ export function createRenderer(canvas) {
     // Weapon and ammo, bottom-right.
     const w = state.weapons[state.weapon];
     const ammoText = w && w.mag === Infinity ? '∞' : `${w ? w.mag : 0} / ${w ? w.ammo : 0}`;
-    text(`${WEAPONS[state.weapon].name}  ${ammoText}`, view.w - 24, view.h - 30, 17, '#e2e8f0', 'right', true);
+    text(`${weaponName(state.weapon)}  ${ammoText}`, view.w - 24, view.h - 30, 17, '#e2e8f0', 'right', true);
     if (state.playerVehicle) {
       text(`${state.playerVehicle.name}  ${Math.round(Math.abs(state.playerVehicle.speed) * 0.36)} km/h`, view.w - 24, view.h - 56, 15, '#93c5fd', 'right', true);
     }
@@ -328,24 +406,24 @@ export function createRenderer(canvas) {
     if (!T) return;
     const beacon = pool.get('nav-beacon', () => {
       const m = new T.Mesh(
-        new T.CylinderGeometry(20, 20, 220, 12, 1, true),
+        new T.CylinderGeometry(1, 1, 12, 12, 1, true),
         new T.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.28, side: T.DoubleSide, depthWrite: false }),
       );
       return m;
     });
-    beacon.position.set(nav.x, 110, nav.y);
+    beacon.position.set(nav.x, 6, nav.y);
     beacon.visible = true;
     const cone = pool.get('nav-cone', () => {
       const m = new T.Mesh(
-        new T.ConeGeometry(14, 26, 4),
+        new T.ConeGeometry(0.8, 1.5, 4),
         new T.MeshBasicMaterial({ color: 0x22d3ee }),
       );
       return m;
     });
-    cone.position.set(nav.x, 60 + Math.sin(time * 3) * 6, nav.y);
+    cone.position.set(nav.x, 3.5 + Math.sin(time * 3) * 0.3, nav.y);
     cone.rotation.y = time;
     cone.visible = true;
-    // Flat arrows on the road, one every ~180 world units along the route
+    // Flat arrows on the road, one every ~12 m along the route
     // from the player. The cone geometry is pre-rotated to point along +Z,
     // so a Y rotation aims it down the road.
     const pts = navPathFromPlayer(state);
@@ -355,7 +433,7 @@ export function createRenderer(canvas) {
         const a = pts[i];
         const b = pts[i + 1];
         const len = Math.hypot(b.x - a.x, b.y - a.y);
-        const steps = Math.floor(len / 180);
+        const steps = Math.floor(len / 12);
         const ang = Math.atan2(b.y - a.y, b.x - a.x);
         for (let k = 1; k <= steps && placed < 40; k += 1) {
           const t = k / (steps + 1);
@@ -364,11 +442,11 @@ export function createRenderer(canvas) {
           const idx = placed;
           placed += 1;
           const arrow = pool.get(`nav-arrow-${idx}`, () => {
-            const geo = new T.ConeGeometry(9, 20, 4);
+            const geo = new T.ConeGeometry(0.5, 1.2, 4);
             geo.rotateX(Math.PI / 2);
             return new T.Mesh(geo, new T.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.9 }));
           });
-          arrow.position.set(x, 4, y);
+          arrow.position.set(x, 0.25, y);
           arrow.rotation.set(0, Math.PI / 2 - ang, 0);
           arrow.visible = true;
         }
@@ -377,6 +455,79 @@ export function createRenderer(canvas) {
   }
 
   // --- 3D frame --------------------------------------------------------
+  // v4: ambient boats on the sea — they sail back and forth along the
+  // coast (never moored), so the beach reads as a living resort shore.
+  // One boat per lane: hull + cabin always, a sail on sailboats, crates on
+  // fishing boats, a windshield on speedboats. Positions are exposed as
+  // window.__neonBay.boats so testers can watch them move.
+  // v4.1, realistic scale (1 unit = 1 m): a motorboat hull is ~8 m long.
+  // Speeds are angular rates along the run — range*speed stays 6-8 m/s,
+  // a believable boat speed, not a speedboat on fast-forward.
+  const BOATS = [
+    { x: 9300, yc: 1900, range: 320, speed: 0.022, phase: 0.0, kind: 'sail' },
+    { x: 9400, yc: 2500, range: 420, speed: 0.018, phase: 1.3, kind: 'fish' },
+    { x: 9350, yc: 3100, range: 380, speed: 0.02, phase: 2.1, kind: 'speed' },
+    { x: 9450, yc: 3700, range: 300, speed: 0.024, phase: 0.7, kind: 'sail' },
+    { x: 9300, yc: 4300, range: 460, speed: 0.016, phase: 2.8, kind: 'fish' },
+    { x: 9400, yc: 4900, range: 340, speed: 0.021, phase: 1.9, kind: 'speed' },
+    { x: 9350, yc: 2200, range: 260, speed: 0.026, phase: 3.6, kind: 'sail' },
+    { x: 9450, yc: 2800, range: 360, speed: 0.019, phase: 4.4, kind: 'fish' },
+    { x: 9300, yc: 3400, range: 300, speed: 0.023, phase: 5.1, kind: 'speed' },
+    { x: 9400, yc: 4600, range: 400, speed: 0.018, phase: 0.4, kind: 'sail' },
+  ];
+  const boatPositions = BOATS.map((b) => ({ x: b.x, y: b.yc, angle: 0, kind: b.kind }));
+  function buildBoatGroup(T, kind) {
+    const g = new T.Group();
+    const hullMat = new T.MeshStandardMaterial({ color: kind === 'fish' ? 0x1e6f8e : 0xf8fafc, roughness: 0.5, metalness: 0.2 });
+    const hull = new T.Mesh(new T.BoxGeometry(8, 1.2, 2.5), hullMat);
+    hull.position.y = 0.6;
+    g.add(hull);
+    const cabinMat = new T.MeshStandardMaterial({ color: kind === 'speed' ? 0x1f2937 : 0xe2e8f0, roughness: 0.6, metalness: 0.1 });
+    const cabin = new T.Mesh(new T.BoxGeometry(3, 1.2, 2), cabinMat);
+    cabin.position.set(kind === 'sail' ? -0.8 : 0.4, 1.2, 0);
+    g.add(cabin);
+    if (kind === 'sail') {
+      const mast = new T.Mesh(new T.CylinderGeometry(0.06, 0.08, 6, 6), new T.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 }));
+      mast.position.set(0.8, 3.6, 0);
+      g.add(mast);
+      const sail = new T.Mesh(new T.BoxGeometry(0.4, 4.5, 2.6), new T.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.8, side: T.DoubleSide }));
+      sail.position.set(0.8, 3.4, 0);
+      sail.rotation.z = 0.12;
+      g.add(sail);
+    } else if (kind === 'fish') {
+      const crateMat = new T.MeshStandardMaterial({ color: 0xb45309, roughness: 0.9 });
+      for (const [cx, cz] of [[-2.4, -0.8], [-2.4, 0.8]]) {
+        const crate = new T.Mesh(new T.BoxGeometry(1.6, 1.2, 1.2), crateMat);
+        crate.position.set(cx, 1.2, cz);
+        g.add(crate);
+      }
+    } else {
+      const shield = new T.Mesh(new T.BoxGeometry(1.6, 1.2, 2.4), new T.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.15, metalness: 0.8 }));
+      shield.position.set(2.4, 1.2, 0);
+      g.add(shield);
+    }
+    return g;
+  }
+  function drawBoats(time) {
+    const T = (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+    if (!T) return;
+    BOATS.forEach((b, i) => {
+      const t = time * b.speed + b.phase;
+      const y = b.yc + Math.sin(t) * b.range;
+      const x = b.x + Math.sin(t * 0.7 + b.phase) * 18;
+      // Heading follows the velocity: mostly along +/-y, so the boat
+      // turns around at the ends of its run instead of sliding backwards.
+      const vy = Math.cos(t);
+      const vx = Math.cos(t * 0.7 + b.phase) * 18 * b.speed * 0.7;
+      const heading = Math.atan2(vy, vx);
+      const boat = pool.get(`boat-${i}`, () => buildBoatGroup(T, b.kind));
+      boat.position.set(x, 0.1 + Math.sin(time * 1.3 + i) * 0.15, y);
+      boat.rotation.y = -heading;
+      boat.visible = true;
+      boatPositions[i] = { x: Math.round(x), y: Math.round(y), angle: heading, kind: b.kind };
+    });
+  }
+
   function drawPickups(state, time) {
     let i = 0;
     for (const p of state.pickups) {
@@ -385,7 +536,7 @@ export function createRenderer(canvas) {
       i += 1;
       const color = p.kind === 'cash' ? '#4ade80' : '#f59e0b';
       const coin = pool.get(`pickup-${idx}`, () => coinMesh(color));
-      coin.position.set(p.x, 10 + Math.sin(time * 2 + idx) * 3, p.y);
+      coin.position.set(p.x, 0.6 + Math.sin(time * 2 + idx) * 0.15, p.y);
       coin.rotation.y = time * 3 + idx;
       if (coin.material.color.getHexString() !== color.slice(1)) {
         coin.material = _coinGeo[color] || coin.material;
@@ -393,7 +544,7 @@ export function createRenderer(canvas) {
     }
   }
 
-  function drawBlobShadow(id, x, z, rx = 16, rz = 9) {
+  function drawBlobShadow(id, x, z, rx = 0.9, rz = 0.5) {
     const s = pool.get(id, () => {
       const m = new THREE.Mesh(
         new THREE.CircleGeometry(1, 20),
@@ -433,31 +584,85 @@ export function createRenderer(canvas) {
     const cam = state.camera || {};
     const yaw = Number.isFinite(cam.yaw) ? cam.yaw : 0;
     const pitch = Number.isFinite(cam.pitch) ? cam.pitch : 0.45;
-    const dist = Number.isFinite(cam.dist) ? cam.dist : 260;
+    // v4.1 scale framing (1 unit = 1 m, Leo 1.8 m): at the default 14 m
+    // follow distance Leo fills ~1/5-1/4 of the frame height and reads as
+    // the focus. On foot the camera closes in (x0.55, clamped 6.5-9 m);
+    // in a vehicle the wider view stays, so the car and the road ahead
+    // stay proportional. The wheel still zooms — this only re-anchors
+    // the default range on foot.
+    const rawDist = Number.isFinite(cam.dist) ? cam.dist : 14;
+    const dist = state.playerVehicle ? rawDist : Math.max(6.5, Math.min(rawDist * 0.55, 9));
     const fx = Math.sin(yaw);
     const fz = Math.cos(yaw);
     const cp = Math.cos(pitch);
     const sp = Math.sin(pitch);
     camera.position.set(focusX - fx * dist * cp, focusY + dist * sp, focusZ - fz * dist * cp);
-    camera.lookAt(focusX, focusY + 18, focusZ);
+    camera.lookAt(focusX, focusY + 1, focusZ);
+
+    // The world just loaded (or changed): apply the pending visual
+    // density from the current quality level (low/medium hide trees).
+    if (world && world !== currentWorld) {
+      currentWorld = world;
+      if (world.setVisualDensity) world.setVisualDensity(QUALITY_LEVELS[_qualityLevel].density);
+    }
 
     weather.update(state, dt);
     // Night glow: lit windows, street lamps and headlights follow the clock.
     updateNightGlow(state);
 
+    // Traffic lights: repaint the lamp instances once per second from the
+    // road graph's cycle — lightStateAt(nodeId, t) returns {ns, ew} per
+    // node; the lamps sit on the south face, so they show the NS axis.
+    if (world && world.trafficLightData && world.graph && world.graph.lightStateAt && time - lastLightRepaint >= 1) {
+      lastLightRepaint = time;
+      const { mesh, nodeIds } = world.trafficLightData;
+      const dim = new THREE.Color('#1f2937');
+      const lit = { red: new THREE.Color('#ef4444'), yellow: new THREE.Color('#fbbf24'), green: new THREE.Color('#22c55e') };
+      for (let i = 0; i < nodeIds.length; i += 1) {
+        const st = world.graph.lightStateAt(nodeIds[i], time);
+        const ns = st ? st.ns : 'red';
+        mesh.setColorAt(i * 3 + 0, ns === 'red' ? lit.red : dim);
+        mesh.setColorAt(i * 3 + 1, ns === 'yellow' ? lit.yellow : dim);
+        mesh.setColorAt(i * 3 + 2, ns === 'green' ? lit.green : dim);
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+
     drawMissionMarkers(pool, state);
     drawNav3D(state, time);
     drawShopSigns(pool, world);
+    drawBoats(time);
     drawVehicles(pool, state, time);
     drawNpcs(pool, state, time);
     drawPolice(pool, state, time);
     if (!state.playerVehicle) {
-      drawBlobShadow('shadow-hero', hero.x, hero.y);
+      if (shadowsEnabled) drawBlobShadow('shadow-hero', hero.x, hero.y);
       drawCharacter(pool, hero, true, time);
     }
     drawBullets(pool, state);
     drawPickups(state, time);
     pool.endFrame();
+
+    // Debug hook for testers (main.js already keeps fps on this object —
+    // only add properties, never replace it).
+    if (typeof window !== 'undefined') {
+      const nb = window.__neonBay || (window.__neonBay = {});
+      nb.worldStats = world ? world.stats || null : null;
+      nb.boats = boatPositions;
+      nb.cameraDist = dist;
+      nb.quality = _qualityLevel;
+      nb.rendererInfo = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
+      nb.ambience = weather.getAmbienceState ? weather.getAmbienceState() : null;
+      let nearNpcs = 0;
+      let nearVehicles = 0;
+      if (state.npcs) {
+        for (const n of state.npcs) if (Math.hypot(n.x - focusX, n.y - focusZ) < 100) nearNpcs += 1;
+      }
+      if (state.vehicles) {
+        for (const v of state.vehicles) if (Math.hypot(v.x - focusX, v.y - focusZ) < 100) nearVehicles += 1;
+      }
+      nb.nearby = { npcs: nearNpcs, vehicles: nearVehicles };
+    }
 
     // Synchronous WebGL render: two paints are enough for a screenshot.
     renderer.render(scene, camera);
@@ -488,7 +693,17 @@ export function createRenderer(canvas) {
     return { x: o.x + d.x * t, y: o.z + d.z * t };
   }
 
+  // Register the Settings hook: main.js applySettings() calls
+  // hooks.onQualityChange(level) when the player changes quality, and this
+  // makes it reach the renderer. Apply the stored level now in case it
+  // was set before the renderer existed (Settings load at boot).
+  if (typeof window !== 'undefined') {
+    window.__neonBayHooks = window.__neonBayHooks || {};
+    window.__neonBayHooks.onQualityChange = applyGraphicsQuality;
+  }
+  applyQuality(_qualityLevel);
+
   resize();
   window.addEventListener('resize', resize);
-  return { draw, view, screenToGround };
+  return { draw, view, screenToGround, applyGraphicsQuality, getGraphicsQuality };
 }

@@ -1,7 +1,12 @@
 out/
+out-v4/
 node_modules/
 playwright-report/
 test-results/
 # Local Playwright test artifacts (screenshots, traces, logs) — never part of the entry.
 test-shots/
+test-shots-v4/
+coverage/
 *.log
+# Per-builder usage rows (written by each builder, merged by the coordinator).
+muse-usage-*.jsonl

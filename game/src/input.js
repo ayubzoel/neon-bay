@@ -3,17 +3,122 @@
 // Touch gets a virtual joystick plus FIRE / CAR / E / RUN buttons.
 // v3: no character switch — Leo Vance is the only hero, so Tab/C and the
 // SWAP button are gone.
+//
+// v4 (Builder C — Settings): the gameplay keys are REBINDABLE. Actions
+// (moveUp, interact, backpack, …) map to KeyboardEvent.codes through
+// DEFAULT_BINDINGS; Settings edits them and input.js applies the new map
+// immediately — no restart. Game code reads actions via pressedAction()
+// / moveX() / moveY() / run; the raw-code pressed(code) stays for the
+// minigames and the fixed 1–6 weapon keys.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 
-const MOVE_KEYS = {
-  KeyW: [0, -1], ArrowUp: [0, -1],
-  KeyS: [0, 1], ArrowDown: [0, 1],
-  KeyA: [-1, 0], ArrowLeft: [-1, 0],
-  KeyD: [1, 0], ArrowRight: [1, 0],
+/** Default key for every rebindable action. */
+export const DEFAULT_BINDINGS = {
+  moveUp: 'KeyW',
+  moveDown: 'KeyS',
+  moveLeft: 'KeyA',
+  moveRight: 'KeyD',
+  jump: 'Space',
+  run: 'ShiftLeft',
+  interact: 'KeyE',
+  enterVehicle: 'KeyF',
+  reload: 'KeyR',
+  pickpocket: 'KeyQ',
+  park: 'KeyG',
+  backpack: 'KeyB',
+  map: 'KeyM',
+  pause: 'KeyP',
+  mute: 'KeyN',
+  radio: 'KeyV',
 };
+
+/** Actions the Settings menu lets the player rebind. `run` stays on
+ *  Shift (both left and right count) and shooting stays on the mouse;
+ *  weapon keys 1–6 are fixed by the backpack layout. */
+export const REBINDABLE_ACTIONS = [
+  'moveUp', 'moveDown', 'moveLeft', 'moveRight', 'jump',
+  'interact', 'enterVehicle', 'reload', 'pickpocket', 'park',
+  'backpack', 'map', 'pause', 'mute', 'radio',
+];
+
 const CONFIRM_KEYS = new Set(['Space', 'Enter']);
-const PAUSE_KEYS = new Set(['KeyP', 'Escape']);
+
+// Arrow keys always steer too (they are not rebindable alternates).
+const ARROW_KEYS = {
+  ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+};
+
+let BINDINGS = { ...DEFAULT_BINDINGS };
+
+function buildMoveMap() {
+  return {
+    [BINDINGS.moveUp]: [0, -1], ArrowUp: [0, -1],
+    [BINDINGS.moveDown]: [0, 1], ArrowDown: [0, 1],
+    [BINDINGS.moveLeft]: [-1, 0], ArrowLeft: [-1, 0],
+    [BINDINGS.moveRight]: [1, 0], ArrowRight: [1, 0],
+  };
+}
+let MOVE_KEYS = buildMoveMap();
+
+/** Current action → code map (a copy). */
+export function getBindings() {
+  return { ...BINDINGS };
+}
+
+/** Apply stored bindings (Settings): unknown actions, bad codes and
+ *  duplicates are dropped, the rest take effect immediately. */
+export function loadBindings(stored) {
+  const next = { ...DEFAULT_BINDINGS };
+  if (stored && typeof stored === 'object') {
+    const used = new Set(Object.values(next));
+    for (const action of REBINDABLE_ACTIONS) {
+      const code = stored[action];
+      if (typeof code !== 'string' || code.length === 0) continue;
+      if (used.has(code) && next[action] !== code) continue;
+      used.delete(next[action]);
+      used.add(code);
+      next[action] = code;
+    }
+  }
+  BINDINGS = next;
+  MOVE_KEYS = buildMoveMap();
+  return { ...BINDINGS };
+}
+
+/**
+ * Rebind one action. Returns { ok: true } or { ok: false, reason,
+ * takenBy } — a code already used by another action is refused so two
+ * actions can never share a key.
+ */
+export function setBinding(action, code) {
+  if (!REBINDABLE_ACTIONS.includes(action)) return { ok: false, reason: 'fixed' };
+  if (typeof code !== 'string' || code.length === 0) return { ok: false, reason: 'badcode' };
+  const takenBy = REBINDABLE_ACTIONS.find((a) => a !== action && BINDINGS[a] === code);
+  if (takenBy) return { ok: false, reason: 'taken', takenBy };
+  BINDINGS[action] = code;
+  MOVE_KEYS = buildMoveMap();
+  return { ok: true };
+}
+
+export function resetBindings() {
+  BINDINGS = { ...DEFAULT_BINDINGS };
+  MOVE_KEYS = buildMoveMap();
+  return { ...BINDINGS };
+}
+
+// --- Vibration (v4 Settings: touch vibration on/off) ----------------------
+let vibrationEnabled = true;
+export function setVibration(enabled) {
+  vibrationEnabled = !!enabled;
+}
+export function vibrate(ms = 15) {
+  try {
+    if (vibrationEnabled && typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(ms);
+  } catch {
+    // Vibration is a nicety, never an error.
+  }
+}
 
 export function createInput(canvas) {
   const held = new Set();
@@ -21,8 +126,11 @@ export function createInput(canvas) {
   let actions = 0;
   const mouse = { x: 0, y: 0, down: false, clicked: false };
   const joy = { x: 0, y: 0, active: false };
-  const touchEdge = { enter: false, interact: false };
+  const touchEdge = { enter: false, interact: false, backpack: false };
   let touchRun = false;
+  // Rebind capture: while set, the next real keydown is the new binding.
+  let rebinding = null;
+  let onRebindDone = null;
 
   // --- v2 camera orbit: drag on the canvas orbits, wheel zooms. A press
   // only counts as a click (shoot) when it is released without orbiting,
@@ -40,6 +148,28 @@ export function createInput(canvas) {
   }
 
   function onKeyDown(event) {
+    // Rebind capture eats the key (Escape cancels) and nothing else.
+    if (rebinding) {
+      if (event.code === 'Escape') {
+        const cb = onRebindDone;
+        const action = rebinding;
+        rebinding = null;
+        onRebindDone = null;
+        if (cb) cb(action, null);
+        event.preventDefault();
+        return;
+      }
+      if (['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(event.code)) return;
+      if (event.repeat) return;
+      const cb = onRebindDone;
+      const action = rebinding;
+      const code = event.code;
+      rebinding = null;
+      onRebindDone = null;
+      if (cb) cb(action, code);
+      event.preventDefault();
+      return;
+    }
     if (MOVE_KEYS[event.code] || event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
       held.add(event.code);
       event.preventDefault();
@@ -53,7 +183,7 @@ export function createInput(canvas) {
       event.preventDefault();
       return;
     }
-    if (PAUSE_KEYS.has(event.code)) {
+    if (event.code === 'Escape' || event.code === BINDINGS.pause) {
       if (!event.repeat) {
         actions |= ACTION_PAUSE;
         pressedSet.add(event.code);
@@ -177,6 +307,7 @@ export function createInput(canvas) {
     if (!el) return;
     el.addEventListener('pointerdown', (event) => {
       event.preventDefault();
+      vibrate(12);
       down();
     });
     el.addEventListener('pointerup', () => up && up());
@@ -187,11 +318,13 @@ export function createInput(canvas) {
   bindTouchButton('btnEnter', () => { touchEdge.enter = true; });
   bindTouchButton('btnInteract', () => { touchEdge.interact = true; });
   bindTouchButton('btnRun', () => { touchRun = true; }, () => { touchRun = false; });
+  // v4: the touch backpack button raises the same edge as the B key.
+  bindTouchButton('btnBackpackTouch', () => { touchEdge.backpack = true; });
 
   return {
     mouse,
     get run() {
-      return held.has('ShiftLeft') || held.has('ShiftRight') || touchRun;
+      return held.has(BINDINGS.run) || held.has('ShiftLeft') || held.has('ShiftRight') || touchRun;
     },
     moveX() {
       let x = 0;
@@ -223,7 +356,57 @@ export function createInput(canvas) {
         touchEdge.interact = false;
         return true;
       }
+      // v4: the touch backpack button is the B key.
+      if (code === 'KeyB' && touchEdge.backpack) {
+        touchEdge.backpack = false;
+        return true;
+      }
       return false;
+    },
+    /**
+     * v4 Settings: edge-triggered press for a rebindable ACTION, using
+     * the current binding. Touch buttons raise the same edges as their
+     * keyboard twins (CAR → enterVehicle, E → interact, BAG → backpack),
+     * and Escape always counts as 'pause' alongside the bound key.
+     */
+    pressedAction(action) {
+      const code = BINDINGS[action];
+      if (code && pressedSet.has(code)) {
+        pressedSet.delete(code);
+        return true;
+      }
+      if (action === 'pause' && pressedSet.has('Escape')) {
+        pressedSet.delete('Escape');
+        return true;
+      }
+      if (action === 'enterVehicle' && touchEdge.enter) {
+        touchEdge.enter = false;
+        return true;
+      }
+      if (action === 'interact' && touchEdge.interact) {
+        touchEdge.interact = false;
+        return true;
+      }
+      if (action === 'backpack' && touchEdge.backpack) {
+        touchEdge.backpack = false;
+        return true;
+      }
+      return false;
+    },
+    /** Start capturing the next keydown as the new binding for `action`.
+     *  `cb(action, code | null)` fires once — null when Escape cancels. */
+    startRebind(action, cb) {
+      if (!REBINDABLE_ACTIONS.includes(action)) return false;
+      rebinding = action;
+      onRebindDone = typeof cb === 'function' ? cb : null;
+      return true;
+    },
+    getRebinding() {
+      return rebinding;
+    },
+    cancelRebind() {
+      rebinding = null;
+      onRebindDone = null;
     },
     takeActions() {
       const taken = actions;
@@ -253,6 +436,7 @@ export function createInput(canvas) {
       pressedSet.clear();
       touchEdge.enter = false;
       touchEdge.interact = false;
+      touchEdge.backpack = false;
     },
   };
 }

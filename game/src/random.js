@@ -44,3 +44,36 @@ export function randomPointInDisc(rng, cx, cy, r) {
 export function randomHeading(rng) {
   return rng.next() * Math.PI * 2;
 }
+
+/**
+ * Pick one entry from a weighted table: [{ value, weight }, ...].
+ * Weights need not sum to 1; a zero/negative total falls back to the
+ * first entry. Used for mission-complete loot (missions.js).
+ */
+export function weightedPick(rng, entries) {
+  let total = 0;
+  for (const e of entries) total += Math.max(0, e.weight || 0);
+  if (total <= 0) return entries[0] ? entries[0].value : null;
+  let roll = rng.next() * total;
+  for (const e of entries) {
+    roll -= Math.max(0, e.weight || 0);
+    if (roll <= 0) return e.value;
+  }
+  return entries[entries.length - 1].value;
+}
+
+/**
+ * v4 mission loot: what Leo pockets when a job pays off. Mostly ammo for
+ * a weapon he already carries (the backpack earns its keep), sometimes a
+ * cash bonus on top of the mission reward.
+ */
+export function randomLootDrop(rng) {
+  const kind = weightedPick(rng, [
+    { value: 'ammo', weight: 0.65 },
+    { value: 'cash', weight: 0.25 },
+    { value: 'ammo-big', weight: 0.1 },
+  ]);
+  if (kind === 'cash') return { kind: 'cash', amount: rng.int(25, 80) };
+  if (kind === 'ammo-big') return { kind: 'ammo', amount: rng.int(24, 48) };
+  return { kind: 'ammo', amount: rng.int(6, 18) };
+}

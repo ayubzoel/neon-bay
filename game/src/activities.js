@@ -4,8 +4,89 @@
 // Plain ES modules, canvas primitives only, no network, no external assets.
 
 import { addMoney } from './state.js';
+import { playSfx } from './audio.js';
+import { addStrings, t } from './i18n.js';
 
-export const ACTIVITY_KINDS = ['pool', 'golf', 'race', 'swim', 'darts', 'gym'];
+// Minigame strings (en default, id below). 'Neon' / 'Pier 9' are proper
+// nouns and stay as-is; the words around them translate.
+addStrings('en', {
+  'act.pool.title': 'Neon Pool',
+  'act.pool.stats': 'Pocketed {pocketed}/6  •  Shots left {shots}  •  $50 per ball',
+  'act.pool.perfect': 'Pool finished! Pocketed 6/6 — earned ${earned}.',
+  'act.pool.done': 'Pool finished! Pocketed {pocketed}/6 — earned ${earned}.',
+  'act.golf.title': 'Neon Golf — Hole {hole} of 3',
+  'act.golf.stats': 'Strokes {strokes} (par 3)  •  Total {total} (par 9)',
+  'act.golf.splash': 'Splash! Ball back to the tee (+1 stroke).',
+  'act.golf.done': 'Golf finished! {strokes} strokes (par 9) — earned ${reward}.',
+  'act.golf.hole': 'Hole {hole} of 3 — par 3.',
+  'act.golf.water': 'WATER',
+  'act.golf.sand': 'SAND',
+  'act.darts.title': 'Neon Darts',
+  'act.darts.stats': 'Darts {thrown}/3  •  Points {points}  •  $2 per point (max $200)',
+  'act.darts.done': 'Darts finished! {points} points — earned ${reward}.',
+  'act.gym.title': 'Neon Gym — 10 second challenge',
+  'act.gym.stats': 'Reps {reps}  •  $5 per rep over 20 (max $150)',
+  'act.gym.done': 'Gym finished! {reps} reps in 10s — earned ${reward}.',
+  'act.fish.title': 'Pier 9 Fishing',
+  'act.fish.stats': 'Cast {cast}/3  •  Caught {caught}  •  Earned ${earned}  •  Click when the fish is in the gold zone',
+  'act.fish.now': 'NOW! Click to catch it!',
+  'act.fish.caught': 'Caught one! +${value}',
+  'act.fish.missed': 'Missed — the fish darted away!',
+  'act.fish.done': 'Fishing finished! Caught {caught}/3 — earned ${earned}.',
+  'act.race.needVehicle': 'You need a vehicle to race!',
+  'act.race.started': 'Race started! Hit all 5 checkpoints — first one is glowing.',
+  'act.race.done': 'Race finished in {time}s — earned ${reward}!',
+  'act.race.checkpoint': 'Checkpoint {index}/{total} — next one is glowing.',
+  'act.swim.started': 'Swim challenge! Collect all 6 buoys in 60 seconds — $40 each.',
+  'act.swim.buoy': 'Buoy {collected}/6 collected! +$40',
+  'act.swim.done': 'Swim challenge over — {collected}/6 buoys.',
+  'act.swim.doneBonus': 'Swim challenge over — {collected}/6 buoys, +$100 bonus for all 6!',
+  'act.quit': 'Minigame quit.',
+  'act.esc': 'ESC to quit',
+});
+addStrings('id', {
+  'act.pool.title': 'Biliar Neon',
+  'act.pool.stats': 'Masuk {pocketed}/6  •  Tembakan tersisa {shots}  •  $50 per bola',
+  'act.pool.perfect': 'Biliar selesai! Masuk 6/6 — dapat ${earned}.',
+  'act.pool.done': 'Biliar selesai! Masuk {pocketed}/6 — dapat ${earned}.',
+  'act.golf.title': 'Golf Neon — Lubang {hole} dari 3',
+  'act.golf.stats': 'Pukulan {strokes} (par 3)  •  Total {total} (par 9)',
+  'act.golf.splash': 'Cebur! Bola kembali ke tee (+1 pukulan).',
+  'act.golf.done': 'Golf selesai! {strokes} pukulan (par 9) — dapat ${reward}.',
+  'act.golf.hole': 'Lubang {hole} dari 3 — par 3.',
+  'act.golf.water': 'AIR',
+  'act.golf.sand': 'PASIR',
+  'act.darts.title': 'Dart Neon',
+  'act.darts.stats': 'Dart {thrown}/3  •  Poin {points}  •  $2 per poin (maks $200)',
+  'act.darts.done': 'Dart selesai! {points} poin — dapat ${reward}.',
+  'act.gym.title': 'Gym Neon — tantangan 10 detik',
+  'act.gym.stats': 'Rep {reps}  •  $5 per rep di atas 20 (maks $150)',
+  'act.gym.done': 'Gym selesai! {reps} rep dalam 10 detik — dapat ${reward}.',
+  'act.fish.title': 'Memancing di Pier 9',
+  'act.fish.stats': 'Lemparan {cast}/3  •  Tertangkap {caught}  •  Dapat ${earned}  •  Klik saat ikan di zona emas',
+  'act.fish.now': 'SEKARANG! Klik untuk menangkapnya!',
+  'act.fish.caught': 'Dapat satu! +${value}',
+  'act.fish.missed': 'Lolos — ikannya kabur!',
+  'act.fish.done': 'Memancing selesai! Tertangkap {caught}/3 — dapat ${earned}.',
+  'act.race.needVehicle': 'Kamu butuh kendaraan untuk balapan!',
+  'act.race.started': 'Balapan dimulai! Lewati 5 checkpoint — yang pertama menyala.',
+  'act.race.done': 'Balapan selesai dalam {time} detik — dapat ${reward}!',
+  'act.race.checkpoint': 'Checkpoint {index}/{total} — selanjutnya menyala.',
+  'act.swim.started': 'Tantangan renang! Kumpulkan 6 pelampung dalam 60 detik — $40 tiap satu.',
+  'act.swim.buoy': 'Pelampung {collected}/6 terkumpul! +$40',
+  'act.swim.done': 'Tantangan renang selesai — {collected}/6 pelampung.',
+  'act.swim.doneBonus': 'Tantangan renang selesai — {collected}/6 pelampung, +$100 bonus semua 6!',
+  'act.quit': 'Minigame dihentikan.',
+  'act.esc': 'ESC untuk keluar',
+});
+
+export const ACTIVITY_KINDS = ['pool', 'golf', 'race', 'swim', 'darts', 'gym', 'fish'];
+
+// --- Activity sounds ---
+// All sound goes through audio.js (the ONE audio system, Builder C): the
+// fishing catch/miss blips are playSfx('coin') / playSfx('splash') at the
+// result sites below. No AudioContext, no oscillators in this module —
+// audio.js owns the context, the buses and the mute/volume settings.
 
 // Race: 5 checkpoints forming a loop on real downtown roads (v3 world):
 // west along street 2600, south down avenue 1500, east along street 4400,
@@ -184,6 +265,15 @@ export function startActivity(state, kind) {
     state.activity = { ...base, darts: [], points: 0, thrown: 0 };
   } else if (kind === 'gym') {
     state.activity = { ...base, timeLeft: 10, reps: 0 };
+  } else if (kind === 'fish') {
+    // v4: pier fishing — 3 casts. A fish swims back and forth under the
+    // pier while a gold strike zone drifts; click when the fish is inside
+    // the zone to land it ($40 + $20 per cast). A click outside the zone
+    // scares the fish away for that cast.
+    state.activity = {
+      ...base, casts: 0, caught: 0, earned: 0,
+      phase: 'swim', result: '', resultTimer: 0, value: 0,
+    };
   }
   state.screen = 'activity';
   return true;
@@ -328,12 +418,12 @@ function updatePool(state, act, dt, input) {
 
   if (act.pocketed >= 6) {
     act.done = true;
-    showMsg(state, `Pool finished! Pocketed 6/6 — earned $${act.pocketed * 50}.`);
+    showMsg(state, t('act.pool.perfect', { earned: act.pocketed * 50 }));
     return 'done';
   }
   if (act.shots <= 0) {
     act.done = true;
-    showMsg(state, `Pool finished! Pocketed ${act.pocketed}/6 — earned $${act.pocketed * 50}.`);
+    showMsg(state, t('act.pool.done', { pocketed: act.pocketed, earned: act.pocketed * 50 }));
     return 'done';
   }
 
@@ -427,7 +517,7 @@ function updateGolf(state, act, dt, input) {
         ball.y = layout.tee.y;
         ball.vx = 0; ball.vy = 0;
         act.strokes += 1;
-        showMsg(state, 'Splash! Ball back to the tee (+1 stroke).');
+        showMsg(state, t('act.golf.splash'));
         break;
       }
     }
@@ -448,12 +538,12 @@ function updateGolf(state, act, dt, input) {
       const over = Math.max(0, act.totalStrokes - 9);
       const reward = Math.max(0, 300 - 25 * over);
       award(state, reward);
-      showMsg(state, `Golf finished! ${act.totalStrokes} strokes (par 9) — earned $${reward}.`);
+      showMsg(state, t('act.golf.done', { strokes: act.totalStrokes, reward }));
       return 'done';
     }
     act.hole += 1;
     act.started = false;
-    showMsg(state, `Hole ${act.hole + 1} of 3 — par 3.`);
+    showMsg(state, t('act.golf.hole', { hole: act.hole + 1 }));
     return null;
   }
 
@@ -512,7 +602,7 @@ function updateDarts(state, act, dt, input) {
       act.done = true;
       const reward = Math.min(200, act.points * 2);
       award(state, reward);
-      showMsg(state, `Darts finished! ${act.points} points — earned $${reward}.`);
+      showMsg(state, t('act.darts.done', { points: act.points, reward }));
       return 'done';
     }
   }
@@ -531,10 +621,130 @@ function updateGym(state, act, dt, input) {
     act.done = true;
     const reward = Math.min(150, Math.max(0, act.reps - 20) * 5);
     award(state, reward);
-    showMsg(state, `Gym finished! ${act.reps} reps in 10s — earned $${reward}.`);
+    showMsg(state, t('act.gym.done', { reps: act.reps, reward }));
     return 'done';
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Fishing (v4, screen-based, Pier 9)
+// ---------------------------------------------------------------------------
+
+function fishLayout(view) {
+  const waterY = view.y + view.h * 0.42;
+  const cx = view.x + view.w / 2;
+  const range = Math.min(view.w * 0.36, 430);
+  return { waterY, cx, range, fishY: view.y + view.h * 0.68 };
+}
+
+function fishPositions(act, view) {
+  const L = fishLayout(view);
+  const speed = 1.1 + act.casts * 0.45;
+  const fishX = L.cx + Math.sin(act.elapsed * speed) * L.range;
+  const zoneX = L.cx + Math.sin(act.elapsed * 0.45 + 1) * L.range * 0.55;
+  return { ...L, fishX, zoneX, zoneW: 120 };
+}
+
+function updateFish(state, act, dt, input) {
+  act.elapsed += dt;
+  if (act.phase === 'result') {
+    act.resultTimer -= dt;
+    if (act.resultTimer <= 0) {
+      if (act.casts >= 3) {
+        act.done = true;
+        showMsg(state, t('act.fish.done', { caught: act.caught, earned: act.earned }));
+        return 'done';
+      }
+      act.phase = 'swim';
+      act.elapsed = 0;
+    }
+    return null;
+  }
+  if (mouseClicked(input)) {
+    const view = lastView || FALLBACK_VIEW;
+    const pos = fishPositions(act, view);
+    act.casts += 1;
+    if (Math.abs(pos.fishX - pos.zoneX) < pos.zoneW / 2) {
+      act.value = 40 + (act.casts - 1) * 20;
+      act.caught += 1;
+      act.earned += act.value;
+      award(state, act.value);
+      act.result = t('act.fish.caught', { value: act.value });
+      playSfx('coin');
+    } else {
+      act.value = 0;
+      act.result = t('act.fish.missed');
+      playSfx('splash');
+    }
+    act.phase = 'result';
+    act.resultTimer = 1.4;
+  }
+  return null;
+}
+
+function drawFish(ctx, state, view) {
+  const act = state.activity;
+  const pos = fishPositions(act, view);
+  ctx.save();
+  // Sky + pier + sea.
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(view.x, view.y, view.w, view.h);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(view.x, view.y + view.h * 0.2, view.w, 26);
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(view.x, view.y + view.h * 0.2 + 26, view.w, 14);
+  const sea = ctx.createLinearGradient(0, pos.waterY, 0, view.y + view.h);
+  sea.addColorStop(0, '#0e7490');
+  sea.addColorStop(1, '#082f49');
+  ctx.fillStyle = sea;
+  ctx.fillRect(view.x, pos.waterY, view.w, view.y + view.h - pos.waterY);
+  // Strike zone: a gold band on the water.
+  ctx.fillStyle = 'rgba(250, 204, 21, 0.35)';
+  ctx.fillRect(pos.zoneX - pos.zoneW / 2, pos.waterY, pos.zoneW, view.y + view.h - pos.waterY);
+  ctx.strokeStyle = '#facc15';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(pos.zoneX - pos.zoneW / 2, pos.waterY, pos.zoneW, view.y + view.h - pos.waterY);
+  // The fish: a shadow under the water, darker when it is in the zone.
+  const inZone = Math.abs(pos.fishX - pos.zoneX) < pos.zoneW / 2;
+  ctx.fillStyle = inZone ? '#facc15' : '#164e63';
+  ctx.beginPath();
+  ctx.ellipse(pos.fishX, pos.fishY, 26, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(pos.fishX - 24, pos.fishY);
+  ctx.lineTo(pos.fishX - 38, pos.fishY - 10);
+  ctx.lineTo(pos.fishX - 38, pos.fishY + 10);
+  ctx.closePath();
+  ctx.fill();
+  // Fishing line from the rod tip down to the zone.
+  ctx.strokeStyle = 'rgba(248, 250, 252, 0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(view.x + view.w / 2, view.y + view.h * 0.2 + 26);
+  ctx.lineTo(pos.zoneX, pos.waterY + 30);
+  ctx.stroke();
+  // Bobber.
+  ctx.fillStyle = '#ef4444';
+  ctx.beginPath();
+  ctx.arc(pos.zoneX, pos.waterY + 30, 7, 0, Math.PI * 2);
+  ctx.fill();
+  if (act.phase === 'result') {
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(act.result, view.x + view.w / 2, view.y + view.h * 0.32);
+  } else if (inZone) {
+    ctx.fillStyle = '#facc15';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t('act.fish.now'), view.x + view.w / 2, view.y + view.h * 0.32);
+  }
+  ctx.restore();
+  drawHud(ctx, view, t('act.fish.title'),
+    t('act.fish.stats', { cast: Math.min(act.casts + 1, 3), caught: act.caught, earned: act.earned }));
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +764,7 @@ export function updateActivity(state, dt, input) {
     if (input) lastInput = input;
     if (pressed(input, 'Escape')) {
       act.done = true;
-      showMsg(state, 'Minigame quit.');
+      showMsg(state, t('act.quit'));
       return 'done';
     }
     const step = Number.isFinite(dt) ? clamp(dt, 0, 0.05) : 0;
@@ -562,6 +772,7 @@ export function updateActivity(state, dt, input) {
     if (act.kind === 'golf') return updateGolf(state, act, step, input);
     if (act.kind === 'darts') return updateDarts(state, act, step, input);
     if (act.kind === 'gym') return updateGym(state, act, step, input);
+    if (act.kind === 'fish') return updateFish(state, act, step, input);
     return null;
   } catch {
     return null;
@@ -583,7 +794,7 @@ function drawHud(ctx, view, title, stats) {
   ctx.font = '15px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = '#cbd5e1';
-  ctx.fillText('ESC to quit', view.x + view.w / 2, view.y + view.h - 18);
+  ctx.fillText(t('act.esc'), view.x + view.w / 2, view.y + view.h - 18);
   ctx.restore();
 }
 
@@ -623,7 +834,7 @@ function drawPool(ctx, state, view) {
     void cue;
   }
   ctx.restore();
-  drawHud(ctx, view, 'Neon Pool', `Pocketed ${act.pocketed}/6  •  Shots left ${act.shots}  •  $50 per ball`);
+  drawHud(ctx, view, t('act.pool.title'), t('act.pool.stats', { pocketed: act.pocketed, shots: act.shots }));
 }
 
 function drawPoolAim(ctx, state, view, input) {
@@ -668,7 +879,7 @@ function drawGolf(ctx, state, view) {
     ctx.font = '13px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(hz.kind === 'water' ? 'WATER' : 'SAND', hz.x, hz.y);
+    ctx.fillText(hz.kind === 'water' ? t('act.golf.water') : t('act.golf.sand'), hz.x, hz.y);
   }
   // Hole + flag.
   ctx.fillStyle = '#020617';
@@ -700,8 +911,8 @@ function drawGolf(ctx, state, view) {
   ctx.arc(act.ball.x, act.ball.y, 8, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  drawHud(ctx, view, `Neon Golf — Hole ${act.hole + 1} of 3`,
-    `Strokes ${act.strokes} (par 3)  •  Total ${act.totalStrokes} (par 9)`);
+  drawHud(ctx, view, t('act.golf.title', { hole: act.hole + 1 }),
+    t('act.golf.stats', { strokes: act.strokes, total: act.totalStrokes }));
 }
 
 function drawDarts(ctx, state, view) {
@@ -757,7 +968,7 @@ function drawDarts(ctx, state, view) {
   ctx.lineTo(aim.x, aim.y + 20);
   ctx.stroke();
   ctx.restore();
-  drawHud(ctx, view, 'Neon Darts', `Darts ${act.thrown}/3  •  Points ${act.points}  •  $2 per point (max $200)`);
+  drawHud(ctx, view, t('act.darts.title'), t('act.darts.stats', { thrown: act.thrown, points: act.points }));
 }
 
 function drawGym(ctx, state, view) {
@@ -804,8 +1015,8 @@ function drawGym(ctx, state, view) {
   ctx.lineWidth = 1;
   ctx.strokeRect(barX, barY, barW, 22);
   ctx.restore();
-  drawHud(ctx, view, 'Neon Gym — 10 second challenge',
-    `Reps ${act.reps}  •  $5 per rep over 20 (max $150)`);
+  drawHud(ctx, view, t('act.gym.title'),
+    t('act.gym.stats', { reps: act.reps }));
 }
 
 /**
@@ -853,6 +1064,7 @@ function drawActivityOnCtx(ctx, state, view) {
     } else if (act.kind === 'golf') drawGolf(ctx, state, view);
     else if (act.kind === 'darts') drawDarts(ctx, state, view);
     else if (act.kind === 'gym') drawGym(ctx, state, view);
+    else if (act.kind === 'fish') drawFish(ctx, state, view);
   } catch {
     // Drawing must never break the game loop.
   }
@@ -869,7 +1081,7 @@ function drawActivityOnCtx(ctx, state, view) {
 export function startRaceChallenge(state) {
   if (!state) return false;
   if (!state.playerVehicle) {
-    showMsg(state, 'You need a vehicle to race!');
+    showMsg(state, t('act.race.needVehicle'));
     return false;
   }
   state.race = {
@@ -878,7 +1090,7 @@ export function startRaceChallenge(state) {
     time: 0,
     best: state.race && Number.isFinite(state.race.best) ? state.race.best : null,
   };
-  showMsg(state, 'Race started! Hit all 5 checkpoints — first one is glowing.');
+  showMsg(state, t('act.race.started'));
   return true;
 }
 
@@ -910,10 +1122,10 @@ export function updateRaceChallenge(state, dt) {
         const reward = Math.max(100, 400 - 2 * over);
         award(state, reward);
         if (state.stats) state.stats.racesWon = (state.stats.racesWon || 0) + 1;
-        showMsg(state, `Race finished in ${race.time.toFixed(1)}s — earned $${reward}!`);
+        showMsg(state, t('act.race.done', { time: race.time.toFixed(1), reward }));
         state.race = null;
       } else {
-        showMsg(state, `Checkpoint ${race.index}/${race.checkpoints.length} — next one is glowing.`);
+        showMsg(state, t('act.race.checkpoint', { index: race.index, total: race.checkpoints.length }));
       }
     }
   } catch {
@@ -936,7 +1148,7 @@ export function startSwimChallenge(state) {
     collected: 0,
     time: 60,
   };
-  showMsg(state, 'Swim challenge! Collect all 6 buoys in 60 seconds — $40 each.');
+  showMsg(state, t('act.swim.started'));
   return true;
 }
 
@@ -958,7 +1170,7 @@ export function updateSwimChallenge(state, dt) {
           buoy.taken = true;
           ch.collected = (ch.collected || 0) + 1;
           award(state, 40);
-          showMsg(state, `Buoy ${ch.collected}/6 collected! +$40`);
+          showMsg(state, t('act.swim.buoy', { collected: ch.collected }));
         }
       }
     }
@@ -969,7 +1181,7 @@ export function updateSwimChallenge(state, dt) {
         bonus = 100;
         award(state, bonus);
       }
-      showMsg(state, `Swim challenge over — ${ch.collected || 0}/6 buoys${bonus ? ', +$100 bonus for all 6!' : '.'}`);
+      showMsg(state, bonus ? t('act.swim.doneBonus', { collected: ch.collected || 0 }) : t('act.swim.done', { collected: ch.collected || 0 }));
       state.swimChallenge = null;
     }
   } catch {

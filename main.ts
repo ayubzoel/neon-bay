@@ -17,7 +17,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -35,10 +35,48 @@ if (!existsSync(join(here, 'game', 'vendor', 'three.min.js'))) {
   throw new Error('Neon Bay 3D is missing game/vendor/three.min.js (vendored three.js)');
 }
 
+// v4 (Builder C): fail the build early when screenshots/ breaks the gate
+// (RULES.txt: 3–4 images, each at most 256 KiB) instead of letting
+// buildDossier refuse the entry after the copy. The dossier library
+// still enforces the same caps; this is the readable pre-flight check.
+const shotsDir = join(here, 'screenshots');
+const shotFiles = existsSync(shotsDir)
+  ? readdirSync(shotsDir).filter((f) => !f.startsWith('.') && /\.(png|jpe?g)$/i.test(f))
+  : [];
+if (shotFiles.length < 3 || shotFiles.length > 4) {
+  throw new Error(`Neon Bay needs 3–4 screenshots, found ${shotFiles.length} in screenshots/`);
+}
+for (const f of shotFiles) {
+  const bytes = statSync(join(shotsDir, f)).size;
+  if (bytes > 262144) throw new Error(`Screenshot ${f} is ${bytes} bytes (gate cap 256 KiB)`);
+}
+
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+
+// v4 build stats on stdout: game file count + bytes and the screenshot
+// list, so a builder sees at a glance whether the entry fits the gate
+// (game: at most 993 files / 48 MiB; screenshots: 3–4, at most 256 KiB each).
+function countTree(dir) {
+  let files = 0;
+  let bytes = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const sub = countTree(p);
+      files += sub.files;
+      bytes += sub.bytes;
+    } else if (entry.isFile()) {
+      files += 1;
+      bytes += statSync(p).size;
+    }
+  }
+  return { files, bytes };
+}
+const gameStats = countTree(join(here, 'game'));
+console.log(`Neon Bay build: game/ ${gameStats.files} files, ${(gameStats.bytes / 1048576).toFixed(2)} MiB; screenshots: ${shotFiles.join(', ')}`);
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
 // scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game

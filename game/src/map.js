@@ -13,11 +13,154 @@
 // canvas; the game loop pauses while it is open (main.js), so the world
 // behind it is frozen. No network, no assets: every glyph is text.
 import { DISTRICT_RECTS, SAFE_HOUSE, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
-import { ACTIVITY_SPOTS } from './data.js';
+import { ACTIVITY_SPOTS, PEAK_HOMES, WORSHIP_PLACES } from './data.js';
 import { showMessage } from './state.js';
+import { missionTitle } from './missions.js';
+import { addStrings, onLangChange, t } from './i18n.js';
+
+// v4 i18n: every word the map shows — legend, groups, GPS messages.
+// Place NAMES (shops, worship places, roads) are proper nouns and stay;
+// the words around them translate. Mission wrappers reuse the keys
+// registered in missions.js ('mission.objectiveNext', 'mission.sideStarted').
+addStrings('en', {
+  'map.symbol.mission': 'Main mission',
+  'map.symbol.side': 'Side job',
+  'map.symbol.food': 'Food — diner / cafe',
+  'map.symbol.gun': 'Gun shop',
+  'map.symbol.clothes': 'Clothes shop',
+  'map.symbol.mods': 'Car mods workshop',
+  'map.symbol.safehouse': 'Safe house',
+  'map.symbol.pool': 'Pool',
+  'map.symbol.golf': 'Golf',
+  'map.symbol.race': 'Race',
+  'map.symbol.swim': 'Swim',
+  'map.symbol.darts': 'Darts',
+  'map.symbol.gym': 'Gym',
+  'map.symbol.fish': 'Fishing',
+  'map.symbol.airport': 'Airport',
+  'map.symbol.npc': 'Contact — Maya / Rico',
+  'map.symbol.road': 'Road point',
+  'map.symbol.player': 'You — Leo Vance',
+  'map.symbol.worship': 'Place of worship',
+  'map.symbol.housing': 'Housing block',
+  'map.symbol.flyover': 'Ring-road flyover',
+  'map.lockedLegend': 'Locked district — finish the mission to open it',
+  'map.locked': 'LOCKED',
+  'map.lockedSuffix': ' — locked',
+  'map.lockedBeach': 'Sunset Beach is locked — finish Main Mission 20 to open the gate.',
+  'map.lockedPeaks': 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.',
+  'map.noRoute': 'No road route to that spot — pick somewhere the roads reach.',
+  'map.gpsSet': 'GPS: {label} — {total} m',
+  'map.roadPoint': 'Road point',
+  'map.navCancelled': 'Navigation cancelled.',
+  'map.offRoad': 'That spot is off the road — pick a place from the list or tap a road.',
+  'map.noDest': 'No destination — pick a place or tap a road',
+  'map.group.jobs': 'Jobs',
+  'map.group.shops': 'Shops',
+  'map.group.places': 'Places',
+  'map.group.activities': 'Activities',
+  'map.group.landmarks': 'Landmarks',
+  'map.dest.safehouse': 'Safe House',
+  'map.dest.airport': 'Airport — Cargo Terminal',
+  'map.dest.maya': 'Maya Reyes (contact)',
+  'map.dest.rico': 'Rico Alvarez (missions)',
+  'map.landmark.home': 'Peak Home · {road}',
+  'map.landmark.flyoverNorth': 'North Ring Flyover',
+  'map.landmark.flyoverWest': 'West Ring Flyover',
+  'map.landmark.flyoverEast': 'East Ring Flyover',
+  'map.landmark.flyoverSouth': 'South Ring Flyover',
+});
+addStrings('id', {
+  'map.symbol.mission': 'Misi utama',
+  'map.symbol.side': 'Pekerjaan sampingan',
+  'map.symbol.food': 'Makanan — restoran / kafe',
+  'map.symbol.gun': 'Toko senjata',
+  'map.symbol.clothes': 'Toko pakaian',
+  'map.symbol.mods': 'Bengkel modifikasi mobil',
+  'map.symbol.safehouse': 'Safe house',
+  'map.symbol.pool': 'Biliar',
+  'map.symbol.golf': 'Golf',
+  'map.symbol.race': 'Balapan',
+  'map.symbol.swim': 'Renang',
+  'map.symbol.darts': 'Dart',
+  'map.symbol.gym': 'Gym',
+  'map.symbol.fish': 'Memancing',
+  'map.symbol.airport': 'Bandara',
+  'map.symbol.npc': 'Kontak — Maya / Rico',
+  'map.symbol.road': 'Titik jalan',
+  'map.symbol.player': 'Kamu — Leo Vance',
+  'map.symbol.worship': 'Tempat ibadah',
+  'map.symbol.housing': 'Blok perumahan',
+  'map.symbol.flyover': 'Flyover jalan lingkar',
+  'map.lockedLegend': 'Wilayah terkunci — selesaikan misi untuk membukanya',
+  'map.locked': 'TERKUNCI',
+  'map.lockedSuffix': ' — terkunci',
+  'map.lockedBeach': 'Sunset Beach terkunci — selesaikan Misi Utama 20 untuk membuka gerbang.',
+  'map.lockedPeaks': 'Cinder Peaks terkunci — selesaikan Misi Utama 40 untuk membuka gerbang.',
+  'map.noRoute': 'Tidak ada rute jalan ke tempat itu — pilih tempat yang terjangkau jalan.',
+  'map.gpsSet': 'GPS: {label} — {total} m',
+  'map.roadPoint': 'Titik jalan',
+  'map.navCancelled': 'Navigasi dibatalkan.',
+  'map.offRoad': 'Tempat itu di luar jalan — pilih dari daftar atau ketuk jalan.',
+  'map.noDest': 'Belum ada tujuan — pilih tempat atau ketuk jalan',
+  'map.group.jobs': 'Pekerjaan',
+  'map.group.shops': 'Toko',
+  'map.group.places': 'Tempat',
+  'map.group.activities': 'Aktivitas',
+  'map.group.landmarks': 'Landmark',
+  'map.dest.safehouse': 'Safe House',
+  'map.dest.airport': 'Bandara — Terminal Kargo',
+  'map.dest.maya': 'Maya Reyes (kontak)',
+  'map.dest.rico': 'Rico Alvarez (misi)',
+  'map.landmark.home': 'Rumah Peak · {road}',
+  'map.landmark.flyoverNorth': 'Flyover Lingkar Utara',
+  'map.landmark.flyoverWest': 'Flyover Lingkar Barat',
+  'map.landmark.flyoverEast': 'Flyover Lingkar Timur',
+  'map.landmark.flyoverSouth': 'Flyover Lingkar Selatan',
+});
 
 const GROUND = ['#3a3f4a', '#d9b96a', '#6b7a72'];
-const DISTRICT_NAMES = ['Downtown', 'Sunset Beach', 'Cinder Peaks'];
+
+/**
+ * v4 landmarks (Builder C): places the v4 city adds — houses of worship,
+ * housing blocks and ring-road flyovers. Worship places and peak homes
+ * come straight from Builder A's data.js (WORSHIP_PLACES, PEAK_HOMES) so
+ * the symbols always match the buildings world.js actually builds; the
+ * map never invents a place of its own.
+ * NOTE for the tester / Builders A+B: the four flyovers mark the ring
+ * road's four legs at the map's edge midpoints — no ring-road geometry
+ * exists in data.js/roadgraph.js yet, so these four points are
+ * provisional. When Builder A builds the ring road, move them onto the
+ * real overpasses; the symbols, legend and GPS entries follow this table.
+ */
+export const V4_LANDMARKS = [
+  ...WORSHIP_PLACES.map((w, i) => ({
+    id: `lm-worship-${i}`, kind: 'worship', label: w.name, x: w.x, y: w.y,
+  })),
+  ...PEAK_HOMES.map((h, i) => ({
+    id: `lm-home-${i}`, kind: 'housing',
+    // Homes have no names in data.js — label by the road they sit on.
+    // The label is resolved at render time (labelKey + labelVars) so a
+    // language switch re-labels them without rebuilding this table.
+    labelKey: 'map.landmark.home',
+    labelVars: {
+      road: Math.abs(h.x - 1500) < 200 || Math.abs(h.x - 3600) < 200 || Math.abs(h.x - 4500) < 200 || Math.abs(h.x - 8400) < 200
+        ? 'Climb Rd'
+        : h.y < 700 ? 'Ridge Rd' : 'Valley Rd',
+    },
+    x: h.x, y: h.y,
+  })),
+  // Ring-road flyovers (provisional edge midpoints — see note above).
+  { id: 'lm-flyover-north', kind: 'flyover', labelKey: 'map.landmark.flyoverNorth', x: 4800, y: 150 },
+  { id: 'lm-flyover-west', kind: 'flyover', labelKey: 'map.landmark.flyoverWest', x: 150, y: 2700 },
+  { id: 'lm-flyover-east', kind: 'flyover', labelKey: 'map.landmark.flyoverEast', x: 9050, y: 2700 },
+  { id: 'lm-flyover-south', kind: 'flyover', labelKey: 'map.landmark.flyoverSouth', x: 4800, y: 5250 },
+];
+
+/** Resolve a landmark's display label in the active language. */
+export function landmarkLabel(lm) {
+  return lm.labelKey ? t(lm.labelKey, lm.labelVars) : lm.label;
+}
 
 /** Which district a world point sits in (0 Downtown, 1 Beach, 2 Peaks). */
 export function districtAt(x, y) {
@@ -26,30 +169,50 @@ export function districtAt(x, y) {
   return 0;
 }
 
-/** One symbol per kind of place: an emoji glyph, a colour, a legend label. */
+/** One symbol per kind of place: an emoji glyph, a colour, a legend label.
+ *  `label` stays as the English default (render.js reads only color/emoji);
+ *  `labelKey` is the i18n key resolved at render time by symbolLabel(). */
 export const SYMBOLS = {
-  mission: { emoji: '⭐', color: '#fde047', label: 'Main mission' },
-  side: { emoji: '💼', color: '#60a5fa', label: 'Side job' },
-  food: { emoji: '🍔', color: '#f59e0b', label: 'Food — diner / cafe' },
-  gun: { emoji: '🔫', color: '#ef4444', label: 'Gun shop' },
-  clothes: { emoji: '👕', color: '#ec4899', label: 'Clothes shop' },
-  mods: { emoji: '🔧', color: '#22d3ee', label: 'Car mods workshop' },
-  safehouse: { emoji: '🏠', color: '#a78bfa', label: 'Safe house' },
-  pool: { emoji: '🎱', color: '#f97316', label: 'Pool' },
-  golf: { emoji: '⛳', color: '#22c55e', label: 'Golf' },
-  race: { emoji: '🏁', color: '#eab308', label: 'Race' },
-  swim: { emoji: '🏊', color: '#38bdf8', label: 'Swim' },
-  darts: { emoji: '🎯', color: '#f472b6', label: 'Darts' },
-  gym: { emoji: '🏋️', color: '#a3e635', label: 'Gym' },
-  airport: { emoji: '✈️', color: '#93c5fd', label: 'Airport' },
-  npc: { emoji: '👤', color: '#f472b6', label: 'Contact — Maya / Rico' },
-  road: { emoji: '📍', color: '#22d3ee', label: 'Road point' },
-  player: { emoji: '🔺', color: '#fde047', label: 'You — Leo Vance' },
+  mission: { emoji: '⭐', color: '#fde047', label: 'Main mission', labelKey: 'map.symbol.mission' },
+  side: { emoji: '💼', color: '#60a5fa', label: 'Side job', labelKey: 'map.symbol.side' },
+  food: { emoji: '🍔', color: '#f59e0b', label: 'Food — diner / cafe', labelKey: 'map.symbol.food' },
+  gun: { emoji: '🔫', color: '#ef4444', label: 'Gun shop', labelKey: 'map.symbol.gun' },
+  clothes: { emoji: '👕', color: '#ec4899', label: 'Clothes shop', labelKey: 'map.symbol.clothes' },
+  mods: { emoji: '🔧', color: '#22d3ee', label: 'Car mods workshop', labelKey: 'map.symbol.mods' },
+  safehouse: { emoji: '🏠', color: '#a78bfa', label: 'Safe house', labelKey: 'map.symbol.safehouse' },
+  pool: { emoji: '🎱', color: '#f97316', label: 'Pool', labelKey: 'map.symbol.pool' },
+  golf: { emoji: '⛳', color: '#22c55e', label: 'Golf', labelKey: 'map.symbol.golf' },
+  race: { emoji: '🏁', color: '#eab308', label: 'Race', labelKey: 'map.symbol.race' },
+  swim: { emoji: '🏊', color: '#38bdf8', label: 'Swim', labelKey: 'map.symbol.swim' },
+  darts: { emoji: '🎯', color: '#f472b6', label: 'Darts', labelKey: 'map.symbol.darts' },
+  gym: { emoji: '🏋️', color: '#a3e635', label: 'Gym', labelKey: 'map.symbol.gym' },
+  // v4: Pier 9 Fishing (Builder A's ACTIVITY_SPOTS) — the activity itself
+  // is Builder B's work; the map just gives it its symbol instead of the
+  // generic road pin.
+  fish: { emoji: '🎣', color: '#38bdf8', label: 'Fishing', labelKey: 'map.symbol.fish' },
+  airport: { emoji: '✈️', color: '#93c5fd', label: 'Airport', labelKey: 'map.symbol.airport' },
+  npc: { emoji: '👤', color: '#f472b6', label: 'Contact — Maya / Rico', labelKey: 'map.symbol.npc' },
+  road: { emoji: '📍', color: '#22d3ee', label: 'Road point', labelKey: 'map.symbol.road' },
+  player: { emoji: '🔺', color: '#fde047', label: 'You — Leo Vance', labelKey: 'map.symbol.player' },
+  // v4 landmarks (Builder C): houses of worship, housing, ring-road flyovers.
+  worship: { emoji: '⛪', color: '#fbbf24', label: 'Place of worship', labelKey: 'map.symbol.worship' },
+  housing: { emoji: '🏘️', color: '#fb923c', label: 'Housing block', labelKey: 'map.symbol.housing' },
+  flyover: { emoji: '🌉', color: '#a78bfa', label: 'Ring-road flyover', labelKey: 'map.symbol.flyover' },
 };
+
+/** Legend / tooltip label for a symbol kind, in the active language. */
+export function symbolLabel(kind) {
+  const s = SYMBOLS[kind];
+  if (!s) return kind;
+  if (!s.labelKey) return s.label;
+  const v = t(s.labelKey);
+  return v === s.labelKey ? s.label : v;
+}
 
 export const LEGEND_ORDER = [
   'mission', 'side', 'food', 'gun', 'clothes', 'mods', 'safehouse',
-  'pool', 'golf', 'race', 'swim', 'darts', 'gym', 'airport', 'npc', 'player',
+  'pool', 'golf', 'race', 'swim', 'darts', 'gym', 'fish', 'airport', 'npc',
+  'worship', 'housing', 'flyover', 'player',
 ];
 
 /** Every place the player can navigate to right now. */
@@ -61,23 +224,30 @@ export function getDestinations(state, world) {
     list.push(d);
   };
   const active = state.missions.active;
-  if (active) add({ id: 'mission-active', kind: 'mission', label: `Mission ${active.id}: ${active.title}`, x: active.x, y: active.y });
+  if (active) add({ id: 'mission-active', kind: 'mission', label: t('mission.objectiveNext', { id: active.id, title: missionTitle(active) }), x: active.x, y: active.y });
   const side = state.missions.activeSide;
-  if (side) add({ id: 'side-active', kind: 'side', label: `Side job: ${side.title}`, x: side.x, y: side.y });
+  if (side) add({ id: 'side-active', kind: 'side', label: t('mission.sideStarted', { title: side.title }), x: side.x, y: side.y });
   for (const q of (state.missions.sidePool || []).slice(0, 6)) {
     add({ id: `side-${q.id}`, kind: 'side', label: q.title, x: q.x, y: q.y });
   }
   for (const s of world.shops) {
     add({ id: `shop-${s.id}`, kind: s.kind, label: s.name, x: s.x + s.w / 2, y: s.y + s.h / 2 });
   }
-  add({ id: 'safehouse', kind: 'safehouse', label: 'Safe House', x: SAFE_HOUSE.door.x, y: SAFE_HOUSE.door.y });
+  add({ id: 'safehouse', kind: 'safehouse', label: t('map.dest.safehouse'), x: SAFE_HOUSE.door.x, y: SAFE_HOUSE.door.y });
   for (const a of world.activitySpots) {
     add({ id: `act-${a.kind}`, kind: a.kind, label: a.name, x: a.x, y: a.y });
   }
-  add({ id: 'airport', kind: 'airport', label: 'Airport — Cargo Terminal', x: 4650, y: 4710 });
+  add({ id: 'airport', kind: 'airport', label: t('map.dest.airport'), x: 4650, y: 4710 });
+  // v4 landmarks (worship / housing / flyovers): navigable like any shop.
+  // They render on the big map, the minimap (render.js draws every
+  // destination) and in the Landmarks list below. Labels resolve here so
+  // a language switch re-labels them on the next list rebuild.
+  for (const lm of V4_LANDMARKS) {
+    add({ id: lm.id, kind: lm.kind, label: landmarkLabel(lm), x: lm.x, y: lm.y });
+  }
   for (const n of state.npcs) {
-    if (n.kind === 'friend') add({ id: 'npc-maya', kind: 'npc', label: 'Maya Reyes (contact)', x: n.x, y: n.y });
-    if (n.kind === 'giver') add({ id: 'npc-rico', kind: 'npc', label: 'Rico Alvarez (missions)', x: n.x, y: n.y });
+    if (n.kind === 'friend') add({ id: 'npc-maya', kind: 'npc', label: t('map.dest.maya'), x: n.x, y: n.y });
+    if (n.kind === 'giver') add({ id: 'npc-rico', kind: 'npc', label: t('map.dest.rico'), x: n.x, y: n.y });
   }
   return list;
 }
@@ -124,26 +294,24 @@ export function buildRoute(state, world, x1, y1, x2, y2) {
 export function setDestination(state, world, dest) {
   const d = districtAt(dest.x, dest.y);
   if (!state.unlocked[d]) {
-    const msg = d === 1
-      ? 'Sunset Beach is locked — finish Main Mission 20 to open the gate.'
-      : 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.';
+    const msg = d === 1 ? t('map.lockedBeach') : t('map.lockedPeaks');
     showMessage(state, msg, 4);
     return { ok: false, reason: 'locked', message: msg };
   }
   const pos = navPosition(state);
   const path = buildRoute(state, world, pos.x, pos.y, dest.x, dest.y);
   if (!path || path.length < 2) {
-    const msg = 'No road route to that spot — pick somewhere the roads reach.';
+    const msg = t('map.noRoute');
     showMessage(state, msg, 4);
     return { ok: false, reason: 'noroute', message: msg };
   }
   state.nav = {
     id: dest.id || 'road', kind: dest.kind || 'road',
-    label: dest.label || 'Road point', x: dest.x, y: dest.y,
+    label: dest.label || t('map.roadPoint'), x: dest.x, y: dest.y,
     path, total: Math.round(polylineLength(path)),
   };
   state.navRepath = 0;
-  showMessage(state, `GPS: ${state.nav.label} — ${state.nav.total} m`, 4);
+  showMessage(state, t('map.gpsSet', { label: state.nav.label, total: state.nav.total }), 4);
   return { ok: true, nav: state.nav };
 }
 
@@ -248,8 +416,10 @@ export function createMapController(opts) {
   let pulseTimer = 0;
   let fitZoom = 0.1;
 
-  // Legend: one row per symbol, built once from the same table the map draws.
-  if (legendEl) {
+  // Legend: one row per symbol, built from the same table the map draws.
+  // Rebuilt on language change (symbolLabel resolves the active language).
+  function buildLegend() {
+    if (!legendEl) return;
     legendEl.innerHTML = '';
     for (const kind of LEGEND_ORDER) {
       const s = SYMBOLS[kind];
@@ -260,7 +430,7 @@ export function createMapController(opts) {
       badge.style.background = s.color;
       badge.textContent = s.emoji;
       const label = document.createElement('span');
-      label.textContent = s.label;
+      label.textContent = symbolLabel(kind);
       row.appendChild(badge);
       row.appendChild(label);
       legendEl.appendChild(row);
@@ -272,11 +442,21 @@ export function createMapController(opts) {
     lockBadge.style.background = '#20242e';
     lockBadge.textContent = '🔒';
     const lockLabel = document.createElement('span');
-    lockLabel.textContent = 'Locked district — finish the mission to open it';
+    lockLabel.textContent = t('map.lockedLegend');
     locked.appendChild(lockBadge);
     locked.appendChild(lockLabel);
     legendEl.appendChild(locked);
   }
+  buildLegend();
+  // v4 i18n: re-render the legend, list and destination label live when
+  // the language changes while the map is open.
+  onLangChange(() => {
+    if (!open) return;
+    buildLegend();
+    updateDestLabel();
+    rebuildList();
+    draw();
+  });
 
   function sizeCanvas() {
     if (!canvas) return { w: 0, h: 0 };
@@ -397,9 +577,9 @@ export function createMapController(opts) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f8fafc';
-    if (state.unlocked[0]) ctx.fillText('Downtown', ...Object.values(s2(3000, 3375)));
-    if (state.unlocked[1]) ctx.fillText('Sunset Beach', ...Object.values(s2(7800, 3375)));
-    if (state.unlocked[2]) ctx.fillText('Cinder Peaks', ...Object.values(s2(4800, 675)));
+    if (state.unlocked[0]) ctx.fillText(t('district.downtown'), ...Object.values(s2(3000, 3375)));
+    if (state.unlocked[1]) ctx.fillText(t('district.beach'), ...Object.values(s2(7800, 3375)));
+    if (state.unlocked[2]) ctx.fillText(t('district.peaks'), ...Object.values(s2(4800, 675)));
 
     // GPS route along the roads, with direction chevrons.
     const nav = state.nav;
@@ -513,7 +693,7 @@ export function createMapController(opts) {
       if (state.unlocked[i]) continue;
       const r = DISTRICT_RECTS[i];
       const c = s2(r.x + r.w / 2, r.y + r.h / 2);
-      const label = `🔒 ${DISTRICT_NAMES[i]} — LOCKED`;
+      const label = `🔒 ${t(['district.downtown', 'district.beach', 'district.peaks'][i])} — ${t('map.locked')}`;
       const tw = ctx.measureText(label).width;
       ctx.fillStyle = 'rgba(5,8,16,0.85)';
       ctx.fillRect(c.x - tw / 2 - 10, c.y - 13, tw + 20, 26);
@@ -527,7 +707,7 @@ export function createMapController(opts) {
     if (destEl) {
       destEl.textContent = state.nav
         ? `GPS ▸ ${state.nav.label} — ${navRemaining(state)} m`
-        : 'No destination — pick a place or tap a road';
+        : t('map.noDest');
     }
     if (cancelBtn) cancelBtn.classList.toggle('hidden', !state.nav);
   }
@@ -538,10 +718,12 @@ export function createMapController(opts) {
     const world = getWorld();
     listEl.innerHTML = '';
     const groups = [
-      ['Jobs', (d) => d.kind === 'mission' || d.kind === 'side'],
-      ['Shops', (d) => ['food', 'gun', 'clothes', 'mods'].includes(d.kind)],
-      ['Places', (d) => ['safehouse', 'airport', 'npc'].includes(d.kind)],
-      ['Activities', (d) => ['pool', 'golf', 'race', 'swim', 'darts', 'gym'].includes(d.kind)],
+      [t('map.group.jobs'), (d) => d.kind === 'mission' || d.kind === 'side'],
+      [t('map.group.shops'), (d) => ['food', 'gun', 'clothes', 'mods'].includes(d.kind)],
+      [t('map.group.places'), (d) => ['safehouse', 'airport', 'npc'].includes(d.kind)],
+      [t('map.group.activities'), (d) => ['pool', 'golf', 'race', 'swim', 'darts', 'gym', 'fish'].includes(d.kind)],
+      // v4 landmarks: worship, housing, ring-road flyovers.
+      [t('map.group.landmarks'), (d) => ['worship', 'housing', 'flyover'].includes(d.kind)],
     ];
     const dests = getDestinations(state, world);
     for (const [title, match] of groups) {
@@ -562,13 +744,13 @@ export function createMapController(opts) {
         badge.textContent = dest.locked ? '🔒' : s.emoji;
         const label = document.createElement('span');
         label.className = 'map-dest-label';
-        label.textContent = dest.label + (dest.locked ? ' — locked' : '');
+        label.textContent = dest.label + (dest.locked ? t('map.lockedSuffix') : '');
         btn.appendChild(badge);
         btn.appendChild(label);
         btn.addEventListener('click', () => {
           if (state.nav && state.nav.id === dest.id) {
             clearNav(state);
-            showMessage(state, 'Navigation cancelled.');
+            showMessage(state, t('map.navCancelled'));
           } else {
             setDestination(state, world, dest);
           }
@@ -600,7 +782,7 @@ export function createMapController(opts) {
     if (best && bestD < 26) {
       if (state.nav && state.nav.id === best.id) {
         clearNav(state);
-        showMessage(state, 'Navigation cancelled.');
+        showMessage(state, t('map.navCancelled'));
         updateDestLabel();
         rebuildList();
         draw();
@@ -615,15 +797,13 @@ export function createMapController(opts) {
     // Free click: a locked district can never be a destination.
     const d = districtAt(pt.x, pt.y);
     if (!state.unlocked[d]) {
-      const msg = d === 1
-        ? 'Sunset Beach is locked — finish Main Mission 20 to open the gate.'
-        : 'Cinder Peaks is locked — finish Main Mission 40 to open the gate.';
+      const msg = d === 1 ? t('map.lockedBeach') : t('map.lockedPeaks');
       showMessage(state, msg, 4);
       if (destEl) destEl.textContent = msg;
       return { ok: false, reason: 'locked', message: msg };
     }
     if (world.graph.isOnRoad(pt.x, pt.y, 10)) {
-      const res = setDestination(state, world, { id: 'road', kind: 'road', label: 'Road point', x: pt.x, y: pt.y });
+      const res = setDestination(state, world, { id: 'road', kind: 'road', label: t('map.roadPoint'), x: pt.x, y: pt.y });
       updateDestLabel();
       rebuildList();
       draw();
@@ -632,13 +812,13 @@ export function createMapController(opts) {
     // Off-road click: snap to the nearest road if it is close, else refuse.
     const near = world.graph.nearestSegmentPoint(pt.x, pt.y);
     if (near && near.dist <= 250) {
-      const res = setDestination(state, world, { id: 'road', kind: 'road', label: 'Road point', x: near.x, y: near.y });
+      const res = setDestination(state, world, { id: 'road', kind: 'road', label: t('map.roadPoint'), x: near.x, y: near.y });
       updateDestLabel();
       rebuildList();
       draw();
       return res;
     }
-    const msg = 'That spot is off the road — pick a place from the list or tap a road.';
+    const msg = t('map.offRoad');
     showMessage(state, msg, 4);
     if (destEl) destEl.textContent = msg;
     return { ok: false, reason: 'offroad', message: msg };
@@ -742,7 +922,7 @@ export function createMapController(opts) {
   if (cancelBtn) cancelBtn.addEventListener('click', () => {
     const state = getState();
     clearNav(state);
-    showMessage(state, 'Navigation cancelled.');
+    showMessage(state, t('map.navCancelled'));
     updateDestLabel();
     rebuildList();
     draw();

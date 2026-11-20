@@ -5,6 +5,7 @@
 // and update(state, dt) drives them from the game clock. No assets, no network.
 // Sky palettes come from SKY_COLORS in data.js (day/dusk/night/rain).
 import { SKY_COLORS } from './data.js';
+import { DISTRICT_RECTS } from './config.js';
 
 /**
  * Compute lighting for the current game clock.
@@ -41,6 +42,45 @@ export function computeLighting(state) {
     tint: darkness > 0.25 ? '#0b1026' : '#1a1a2e',
     rainIntensity,
   };
+}
+
+/**
+ * Day-part for an hour (0-24): 'night' | 'dawn' | 'day' | 'dusk'.
+ * Used by the ambience rig (night is quieter, crickets) and by Settings.
+ */
+export function timeBand(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  if (h < 5 || h >= 20) return 'night';
+  if (h < 7) return 'dawn';
+  if (h < 18) return 'day';
+  return 'dusk';
+}
+
+/**
+ * Settings hook (Builder C calls this from the Settings menu): move the
+ * game clock to `hours` (0-24, fractional). Applies immediately, no
+ * restart; the clock keeps advancing from there.
+ */
+export function setTimeOfDay(state, hours) {
+  if (!state) return;
+  state.time = state.time || {};
+  state.time.minutes = Math.round((((hours % 24) + 24) % 24) * 60);
+  if (!Number.isFinite(state.time.day)) state.time.day = 1;
+}
+
+/**
+ * Settings hook (Builder C calls this from the Settings menu): change the
+ * weather. 'clear' -> summer, no rain; 'rain' -> rainy, 0.7; 'storm' ->
+ * rainy, 1; 'drizzle' -> rainy, 0.3. Applies immediately, no restart.
+ */
+export function setWeather(state, kind) {
+  if (!state) return;
+  switch (kind) {
+    case 'rain': state.season = 'rainy'; state.rain = 0.7; break;
+    case 'storm': state.season = 'rainy'; state.rain = 1; break;
+    case 'drizzle': state.season = 'rainy'; state.rain = 0.3; break;
+    case 'clear': default: state.season = 'summer'; state.rain = 0; break;
+  }
 }
 
 const RAIN_COUNT = 800;
@@ -88,10 +128,87 @@ function skyGradient(which) {
   return SKY_GRADIENTS[which];
 }
 
+// ---------------------------------------------------------------------------
+// Ambient audio — driven through audio.js, the ONE audio system.
+// audio.js (Builder C) owns the AudioContext, the buses (music/sfx/
+// ambience/vehicle) and the persistent ambience loop; its docstring says
+// "weather.js ambience → setAmbience(kind)". So this module does NOT build
+// a parallel rig or its own AudioContext: update() maps the hero's district
+// + rain to one of audio.js's ambience kinds ('city' | 'beach' | 'peaks' |
+// 'rain') and calls audio.js setAmbience(kind) when it changes. The
+// Settings hooks below (onTimeMode/onWeatherMode, registered into
+// window.__neonBayHooks for main.js) apply the chosen time/weather once on
+// the next frame. Everything is guarded: audio must never break gameplay.
+//
+// Honest gaps (audio.js is Builder C's file, not mine): the ambience kinds
+// have no night variant, so night is not yet quieter and there are no
+// crickets; and there are no horn/gull/bird one-shots in the loop. Both are
+// small additions to audio.js's AMBIENCE_KINDS / startLoops — flagged to
+// the coordinator, not built here as a second audio system.
+import { setAmbience as setAudioAmbience, getAudioState } from './audio.js';
+
+const AMB_KIND_BY_DISTRICT = ['city', 'beach', 'peaks'];
+let _ambienceKind = 'none';
+let _ambienceDistrict = 0;
+let _ambienceTimeOfDay = 'day';
+let _ambienceRain = 0;
+let _pendingTimeMode = null;
+let _pendingWeatherMode = null;
+
+/** District index (0 downtown, 1 beach, 2 peaks) for a hero position. */
+export function districtAt(hero) {
+  if (!hero) return 0;
+  if (hero.y < DISTRICT_RECTS[2].y + DISTRICT_RECTS[2].h) return 2;
+  if (hero.x >= DISTRICT_RECTS[1].x) return 1;
+  return 0;
+}
+
+/**
+ * The audio.js ambience kind for a game state: 'rain' when it is raining
+ * hard, otherwise the hero's district ('city' | 'beach' | 'peaks').
+ * Pure function — no audio side effects, easy to test.
+ */
+export function ambienceKindFor(state) {
+  const rain = state && Number.isFinite(state.rain) ? state.rain : 0;
+  if (rain > 0.4) return 'rain';
+  return AMB_KIND_BY_DISTRICT[districtAt(state ? state.hero : null)];
+}
+
+/** Last driven ambience state (for the window.__neonBay debug hook). */
+export function getAmbienceState() {
+  let audioKind = null;
+  try { audioKind = getAudioState ? getAudioState().ambience : null; } catch { /* ignore */ }
+  return {
+    kind: _ambienceKind,
+    audioKind,
+    district: ['downtown', 'beach', 'peaks'][_ambienceDistrict],
+    timeOfDay: _ambienceTimeOfDay,
+    rain: Math.round(_ambienceRain * 100) / 100,
+  };
+}
+
+/**
+ * Settings hook (main.js calls this via window.__neonBayHooks.onTimeMode
+ * with 'auto' | 'day' | 'night'): jump the clock once to noon / 22:00 on
+ * the next frame, then let it run. 'auto' does nothing.
+ */
+export function setTimeMode(mode) {
+  _pendingTimeMode = mode === 'day' || mode === 'night' ? mode : null;
+}
+
+/**
+ * Settings hook (main.js calls this via window.__neonBayHooks.onWeatherMode
+ * with 'auto' | 'clear' | 'rain'): apply the weather once on the next
+ * frame. 'auto' does nothing.
+ */
+export function setWeatherMode(mode) {
+  _pendingWeatherMode = mode === 'clear' || mode === 'rain' ? mode : null;
+}
+
 /**
  * Install the 3D weather rig (sun, hemisphere light, rain) into the scene.
  * @param {THREE.Scene} scene
- * @returns {{ update: (state: object, dt: number) => void }}
+ * @returns {{ update: (state: object, dt: number) => void, getAmbienceState: () => object, ambienceKindFor: Function, districtAt: Function, setTimeMode: Function, setWeatherMode: Function }}
  */
 export function createWeather(scene) {
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -121,7 +238,7 @@ export function createWeather(scene) {
     positions[i * 3] = (Math.random() - 0.5) * RAIN_W;
     positions[i * 3 + 1] = Math.random() * RAIN_H;
     positions[i * 3 + 2] = (Math.random() - 0.5) * RAIN_D;
-    speeds[i] = 260 + Math.random() * 220;
+    speeds[i] = 60 + Math.random() * 60; // 60-120 m/s: heavy rain, not supersonic
   }
   const rainGeo = new THREE.BufferGeometry();
   rainGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -133,6 +250,38 @@ export function createWeather(scene) {
   rain.visible = false;
   rain.frustumCulled = false;
   scene.add(rain);
+
+  // v4: night sky — stars and a moon, so the night is a sky, not a void.
+  // 700 stars on a dome around the focus (opacity follows the darkness),
+  // and a pale moon disc hanging north-west of the focus. Both follow the
+  // camera focus like the sky dome and the rain cloud do.
+  const STAR_COUNT = 700;
+  const starPos = new Float32Array(STAR_COUNT * 3);
+  for (let i = 0; i < STAR_COUNT; i += 1) {
+    const a = Math.random() * Math.PI * 2;
+    const e = Math.random() * Math.PI * 0.45 + 0.08;
+    const r = 3300;
+    starPos[i * 3] = Math.cos(a) * Math.cos(e) * r;
+    starPos[i * 3 + 1] = Math.sin(e) * r;
+    starPos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
+  }
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const starMat = new THREE.PointsMaterial({
+    color: 0xffffff, size: 2, transparent: true, opacity: 0,
+    sizeAttenuation: false, depthWrite: false, fog: false,
+  });
+  const stars = new THREE.Points(starGeo, starMat);
+  stars.visible = false;
+  stars.frustumCulled = false;
+  scene.add(stars);
+  const moonMat = new THREE.MeshBasicMaterial({
+    color: 0xe2e8f0, transparent: true, opacity: 0, fog: false, depthWrite: false,
+  });
+  const moon = new THREE.Mesh(new THREE.CircleGeometry(90, 24), moonMat);
+  moon.visible = false;
+  moon.frustumCulled = false;
+  scene.add(moon);
 
   function update(state, dt) {
     const { darkness, rainIntensity } = computeLighting(state);
@@ -152,7 +301,7 @@ export function createWeather(scene) {
       sun.color.setRGB(1, 1 - warm * 0.25, 1 - warm * 0.45);
     } else {
       sun.position.set(fx - 300, 500, fz - 200);
-      sun.intensity = 0.22;
+      sun.intensity = 0.3; // moonlight: a touch stronger so the neon city reads
       sun.color.setHex(0x8ea2c8);
     }
     hemi.intensity = 0.95 - darkness * 0.55;
@@ -205,7 +354,49 @@ export function createWeather(scene) {
         rainGeo.attributes.position.needsUpdate = true;
       }
     }
+
+    // Stars + moon: fade in with the darkness, follow the focus.
+    const nightT = Math.min(1, Math.max(0, darkness * 2));
+    stars.visible = nightT > 0.05;
+    if (stars.visible) {
+      starMat.opacity = 0.9 * nightT;
+      stars.position.set(fx, 0, fz);
+    }
+    moon.visible = nightT > 0.05;
+    if (moon.visible) {
+      moonMat.opacity = nightT;
+      moon.position.set(fx - 1400, 1100, fz - 900);
+      moon.lookAt(fx, 60, fz);
+    }
+
+    // Ambience: drive audio.js's loop from the hero's district + rain.
+    // Settings time/weather modes (if the player picked them) apply once.
+    if (_pendingTimeMode) {
+      setTimeOfDay(state, _pendingTimeMode === 'day' ? 12 : 22);
+      _pendingTimeMode = null;
+    }
+    if (_pendingWeatherMode) {
+      setWeather(state, _pendingWeatherMode);
+      _pendingWeatherMode = null;
+    }
+    _ambienceDistrict = districtAt(state.hero);
+    _ambienceTimeOfDay = darkness > 0.35 ? 'night' : 'day';
+    _ambienceRain = rainIntensity;
+    const kind = ambienceKindFor(state);
+    if (kind !== _ambienceKind) {
+      _ambienceKind = kind;
+      try { setAudioAmbience(kind); } catch { /* audio never breaks the game */ }
+    }
   }
 
-  return { update };
+  // Register the Settings hooks so main.js applySettings() can drive
+  // time/weather through this module (the hooks are called with the mode
+  // only; the state is applied on the next update()).
+  if (typeof window !== 'undefined') {
+    window.__neonBayHooks = window.__neonBayHooks || {};
+    window.__neonBayHooks.onTimeMode = setTimeMode;
+    window.__neonBayHooks.onWeatherMode = setWeatherMode;
+  }
+
+  return { update, getAmbienceState, ambienceKindFor, districtAt, setTimeMode, setWeatherMode };
 }
