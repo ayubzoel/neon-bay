@@ -144,17 +144,17 @@ export const V4_LANDMARKS = [
     // language switch re-labels them without rebuilding this table.
     labelKey: 'map.landmark.home',
     labelVars: {
-      road: Math.abs(h.x - 1500) < 200 || Math.abs(h.x - 3600) < 200 || Math.abs(h.x - 4500) < 200 || Math.abs(h.x - 8400) < 200
+      road: Math.abs(h.x - 375) < 50 || Math.abs(h.x - 900) < 50 || Math.abs(h.x - 1125) < 50 || Math.abs(h.x - 2100) < 50
         ? 'Climb Rd'
-        : h.y < 700 ? 'Ridge Rd' : 'Valley Rd',
+        : h.y < 150 ? 'Ridge Rd' : 'Valley Rd',
     },
     x: h.x, y: h.y,
   })),
   // Ring-road flyovers (provisional edge midpoints — see note above).
-  { id: 'lm-flyover-north', kind: 'flyover', labelKey: 'map.landmark.flyoverNorth', x: 4800, y: 150 },
-  { id: 'lm-flyover-west', kind: 'flyover', labelKey: 'map.landmark.flyoverWest', x: 150, y: 2700 },
-  { id: 'lm-flyover-east', kind: 'flyover', labelKey: 'map.landmark.flyoverEast', x: 9050, y: 2700 },
-  { id: 'lm-flyover-south', kind: 'flyover', labelKey: 'map.landmark.flyoverSouth', x: 4800, y: 5250 },
+  { id: 'lm-flyover-north', kind: 'flyover', labelKey: 'map.landmark.flyoverNorth', x: 1200, y: 50 },
+  { id: 'lm-flyover-west', kind: 'flyover', labelKey: 'map.landmark.flyoverWest', x: 37.5, y: 900 },
+  { id: 'lm-flyover-east', kind: 'flyover', labelKey: 'map.landmark.flyoverEast', x: 2262.5, y: 900 },
+  { id: 'lm-flyover-south', kind: 'flyover', labelKey: 'map.landmark.flyoverSouth', x: 1200, y: 1750 },
 ];
 
 /** Resolve a landmark's display label in the active language. */
@@ -237,7 +237,7 @@ export function getDestinations(state, world) {
   for (const a of world.activitySpots) {
     add({ id: `act-${a.kind}`, kind: a.kind, label: a.name, x: a.x, y: a.y });
   }
-  add({ id: 'airport', kind: 'airport', label: t('map.dest.airport'), x: 4650, y: 4710 });
+  add({ id: 'airport', kind: 'airport', label: t('map.dest.airport'), x: 1162.5, y: 1570 });
   // v4 landmarks (worship / housing / flyovers): navigable like any shop.
   // They render on the big map, the minimap (render.js draws every
   // destination) and in the Landmarks list below. Labels resolve here so
@@ -577,9 +577,9 @@ export function createMapController(opts) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f8fafc';
-    if (state.unlocked[0]) ctx.fillText(t('district.downtown'), ...Object.values(s2(3000, 3375)));
-    if (state.unlocked[1]) ctx.fillText(t('district.beach'), ...Object.values(s2(7800, 3375)));
-    if (state.unlocked[2]) ctx.fillText(t('district.peaks'), ...Object.values(s2(4800, 675)));
+    if (state.unlocked[0]) ctx.fillText(t('district.downtown'), ...Object.values(s2(750, 1125)));
+    if (state.unlocked[1]) ctx.fillText(t('district.beach'), ...Object.values(s2(1950, 1125)));
+    if (state.unlocked[2]) ctx.fillText(t('district.peaks'), ...Object.values(s2(1200, 225)));
 
     // GPS route along the roads, with direction chevrons.
     const nav = state.nav;

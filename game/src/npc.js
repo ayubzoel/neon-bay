@@ -95,15 +95,15 @@ export function spawnNpcs(state, world, rng) {
     });
   }
   // Rico, the diner owner who hands out the first missions, waits on the
-  // sidewalk by the Neon Diner (1800, 2558).
+  // sidewalk by the Neon Diner (450, 852.7).
   list.push({
-    kind: 'giver', name: 'Rico Alvarez', x: 1740, y: 2558, angle: Math.PI / 2,
+    kind: 'giver', name: 'Rico Alvarez', x: 435, y: 852.7, angle: Math.PI / 2,
     speed: 0, money: 0, color: '#f59e0b', state: 'idle', hp: 100,
   });
   // Maya Reyes, Leo's old friend from the neighbourhood: no longer playable,
   // she waits by the diner with a lead whenever Leo needs one. Talk to her.
   list.push({
-    kind: 'friend', name: 'Maya Reyes', x: 1700, y: 2650, angle: Math.PI / 2,
+    kind: 'friend', name: 'Maya Reyes', x: 425, y: 883.3, angle: Math.PI / 2,
     speed: 0, money: 0, color: '#ec4899', skin: 0xf2c89b, hairColor: 0x3b1f1a,
     hair: 'long', state: 'idle', hp: 100,
   });

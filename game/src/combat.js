@@ -38,12 +38,18 @@ addStrings('en', {
   'combat.noAmmo': 'No {name} ammo — buy more at Ironworks Arms.',
   'combat.reloaded': '{name} reloaded.',
   'combat.notOwned': '{name} not owned — visit a gun shop.',
+  // v6: holster / draw toasts.
+  'combat.holstered': '{name} holstered — hands empty.',
+  'combat.drawn': '{name} drawn.',
 });
 addStrings('id', {
   'combat.backpackFull': 'Tas penuh — enam senjata adalah batasnya.',
   'combat.noAmmo': 'Tidak ada amunisi {name} — beli lagi di Ironworks Arms.',
   'combat.reloaded': '{name} sudah diisi ulang.',
   'combat.notOwned': '{name} belum dimiliki — kunjungi toko senjata.',
+  // v6: toast simpan / pegang senjata.
+  'combat.holstered': '{name} disimpan — tangan kosong.',
+  'combat.drawn': '{name} di tangan.',
 });
 
 /** Muzzle sits ~1 m in front of a 1.8 m Leo. */
@@ -164,6 +170,8 @@ function fireWeapon(state, mouseWorld) {
   const owned = state.weapons[key];
   if (!owned || !owned.owned) return;
   if (state.fireCd > 0) return;
+  // v6: firing draws the weapon first, so holstering never blocks a shot.
+  if (state.holstered) state.holstered = false;
   if (owned.mag <= 0) {
     reloadWeapon(state);
     return;
@@ -248,11 +256,35 @@ export function switchWeapon(state, key) {
     showMessage(state, t('combat.notOwned', { name: t(`weapon.${key}`) }));
     return false;
   }
-  if (state.weapon === key) return true;
+  if (state.weapon === key) {
+    // Re-selecting the weapon in hand draws it again after holstering.
+    if (state.holstered) {
+      state.holstered = false;
+      playSfx('swap');
+      showMessage(state, t('combat.drawn', { name: t(`weapon.${key}`) }));
+    }
+    return true;
+  }
   state.weapon = key;
+  // v6: picking a weapon means holding it — switching draws it out of
+  // the holster, so the backpack is the way back to "in hand".
+  state.holstered = false;
   playSfx('swap');
   showMessage(state, t(`weapon.${key}`));
   return true;
+}
+
+/**
+ * v6: holster / draw the active weapon. Holstered, Leo's hands are empty
+ * and the weapon rides on his back (player.js); drawn, it is in his
+ * right hand. Switching weapons always draws (see switchWeapon); firing
+ * draws too, so holstering never blocks a shot.
+ */
+export function toggleHolster(state) {
+  state.holstered = !state.holstered;
+  playSfx('swap');
+  showMessage(state, t(state.holstered ? 'combat.holstered' : 'combat.drawn', { name: t(`weapon.${state.weapon}`) }));
+  return state.holstered;
 }
 
 /**
@@ -389,6 +421,8 @@ export function updateCombat(state, dt, input, mouseWorld) {
   const wantFire = def.auto ? input.mouse.down : input.mouse.clicked;
   if (wantFire && state.screen === 'play') fireWeapon(state, mouseWorld);
   if (input.pressedAction('reload')) reloadWeapon(state);
+  // v6: H holsters / draws the active weapon (see toggleHolster).
+  if (input.pressedAction('holster')) toggleHolster(state);
   for (let i = 0; i < WEAPON_ORDER.length; i += 1) {
     if (input.pressed(`Digit${i + 1}`)) switchWeapon(state, WEAPON_ORDER[i]);
   }

@@ -296,9 +296,7 @@ export function createRenderer(canvas) {
     return _navCache.pts;
   }
 
-  function drawMinimap(state) {
-    const mw = 190;
-    const mh = 142;
+  function drawMinimap(state, mw = 190, mh = 142) {
     const x0 = view.w - mw - 14;
     const y0 = 14;
     const sx = mw / WORLD_WIDTH;
@@ -397,71 +395,141 @@ export function createRenderer(canvas) {
 
   function drawHud(state, time) {
     const hero = state.hero;
+    // v6 narrow layout (phones, view.w < 700): the top row and the bottom
+    // strip are re-stacked so nothing overlaps — the desktop geometry
+    // below is untouched for view.w >= 700.
+    const narrow = view.w < 700;
     hctx.save();
-    // Money and vitals, top-left.
+    // Money and vitals, top-left. Narrow: the panel shrinks to 170 px
+    // and the minimap to ~118 px, so the two fit side by side in 390 px
+    // with room for the clock pill below them (v6 — the 250 px panel and
+    // 190 px minimap overlapped each other and the clock).
+    const panelW = narrow ? 170 : 250;
+    const barW = narrow ? 146 : 200;
     hctx.fillStyle = 'rgba(10,14,22,0.8)';
-    hctx.fillRect(12, 12, 250, 86);
-    text(`$${state.money.toLocaleString('en-US')}`, 24, 40, 26, '#4ade80', 'left', true);
-    text(`${hero.name}  ·  ${weaponName(state.weapon)}`, 24, 62, 14, '#e2e8f0');
+    hctx.fillRect(12, 12, panelW, 86);
+    text(fitText(`$${state.money.toLocaleString('en-US')}`, 26, barW, true), 24, 40, 26, '#4ade80', 'left', true);
+    text(fitText(`${hero.name}  ·  ${weaponName(state.weapon)}`, 14, barW), 24, 62, 14, '#e2e8f0');
     // HP red bar, armor grey bar.
     hctx.fillStyle = '#1f2937';
-    hctx.fillRect(24, 70, 200, 10);
+    hctx.fillRect(24, 70, barW, 10);
     hctx.fillStyle = '#ef4444';
-    hctx.fillRect(24, 70, 200 * Math.max(0, hero.hp / 100), 10);
+    hctx.fillRect(24, 70, barW * Math.max(0, hero.hp / 100), 10);
     hctx.fillStyle = '#1f2937';
-    hctx.fillRect(24, 84, 200, 7);
+    hctx.fillRect(24, 84, barW, 7);
     hctx.fillStyle = '#9ca3af';
-    hctx.fillRect(24, 84, 200 * Math.max(0, hero.armor / 100), 7);
-    // Wanted stars under the minimap.
-    const sx = view.w - 190 - 14;
+    hctx.fillRect(24, 84, barW * Math.max(0, hero.armor / 100), 7);
+    // Wanted stars under the minimap. Narrow: under the shrunken minimap
+    // and lower, because the clock / GPS / prompt pills stack above them.
+    const mmW = narrow ? Math.max(80, Math.min(118, view.w - 204)) : 190;
+    const mmH = narrow ? Math.round(mmW * 142 / 190) : 142;
+    const sx = narrow ? view.w - 164 : view.w - 190 - 14;
+    const starsY = narrow ? 230 : 178;
     for (let i = 0; i < 5; i += 1) {
-      text('★', sx + i * 30, 178, 26, i < state.wanted ? '#fbbf24' : 'rgba(255,255,255,0.25)', 'left', true);
+      text('★', sx + i * 30, starsY, 26, i < state.wanted ? '#fbbf24' : 'rgba(255,255,255,0.25)', 'left', true);
     }
     // Clock, season and day, top-centre — on a dark pill so the white text
     // stays readable against a bright noon sky (tester report: low
-    // contrast at 10:15 in daylight).
+    // contrast at 10:15 in daylight). Narrow: the pill drops to a second
+    // row under the money panel and minimap — centred at the top it
+    // overlapped both (v6).
     const seasonLabel = state.season === 'rainy' ? t('hud.season.rainy') : t('hud.season.summer');
     const clockLabel = t('hud.clock', { clock: clockText(state), day: state.time.day, season: seasonLabel });
     hctx.font = `bold 17px ${FONT}`;
     const clockW = hctx.measureText(clockLabel).width;
+    const clockY = narrow ? 110 : 12;
     hctx.fillStyle = 'rgba(10,14,22,0.78)';
     hctx.beginPath();
-    if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - clockW / 2 - 12, 12, clockW + 24, 28, 14);
-    else hctx.rect(view.w / 2 - clockW / 2 - 12, 12, clockW + 24, 28);
+    if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - clockW / 2 - 12, clockY, clockW + 24, 28, 14);
+    else hctx.rect(view.w / 2 - clockW / 2 - 12, clockY, clockW + 24, 28);
     hctx.fill();
-    text(clockLabel, view.w / 2, 32, 17, '#f8fafc', 'center', true);
+    text(clockLabel, view.w / 2, clockY + 20, 17, '#f8fafc', 'center', true);
     // GPS: destination + remaining distance, under the clock.
     if (state.nav) {
       const gpsLabel = t('hud.gps', { label: state.nav.label, dist: navRemaining(state) });
       const gpsText = fitText(gpsLabel, 14, Math.min(560, view.w - 40));
       hctx.font = `bold 14px ${FONT}`;
       const gpsW = hctx.measureText(gpsText).width;
+      const gpsY = narrow ? 142 : 44;
       hctx.fillStyle = 'rgba(8,47,73,0.85)';
       hctx.beginPath();
-      if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - gpsW / 2 - 10, 44, gpsW + 20, 24, 12);
-      else hctx.rect(view.w / 2 - gpsW / 2 - 10, 44, gpsW + 20, 24);
+      if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - gpsW / 2 - 10, gpsY, gpsW + 20, 24, 12);
+      else hctx.rect(view.w / 2 - gpsW / 2 - 10, gpsY, gpsW + 20, 24);
       hctx.fill();
-      text(gpsText, view.w / 2, 61, 14, '#a5f3fc', 'center', true);
+      text(gpsText, view.w / 2, gpsY + 17, 14, '#a5f3fc', 'center', true);
     }
-    // Objective, bottom-left — text clipped to the bar so it can never
-    // run under the weapon readout at the bottom-right.
-    hctx.fillStyle = 'rgba(10,14,22,0.75)';
-    const objW = Math.min(560, view.w - 28);
-    hctx.fillRect(12, view.h - 58, objW, 46);
-    text(fitText(`◆ ${state.objective}`, 15, objW - 24), 24, view.h - 30, 15, '#fde68a');
-    // Weapon and ammo, bottom-right.
+    // Objective + weapon/ammo. Narrow (phone): the bottom strip is the
+    // touch buttons' turf — the objective bar moves above the stick
+    // (clear of the E button), the ammo gets its own pill at the
+    // bottom-right (clear of the CAR button), and the prompt moves to a
+    // pill under the clock/GPS stack (v6 — all three collided with the
+    // buttons and with each other at 390 px).
     const w = state.weapons[state.weapon];
-    const ammoText = w && w.mag === Infinity ? '∞' : `${w ? w.mag : 0} / ${w ? w.ammo : 0}`;
-    text(`${weaponName(state.weapon)}  ${ammoText}`, view.w - 24, view.h - 30, 17, '#e2e8f0', 'right', true);
-    if (state.playerVehicle) {
-      text(`${state.playerVehicle.name}  ${Math.round(Math.abs(state.playerVehicle.speed) * 0.36)} km/h`, view.w - 24, view.h - 56, 15, '#93c5fd', 'right', true);
+    let ammoText = `${weaponName(state.weapon)}  ${w && w.mag === Infinity ? '∞' : `${w ? w.mag : 0} / ${w ? w.ammo : 0}`}`;
+    if (narrow && state.playerVehicle) {
+      ammoText += `  ·  ${Math.round(Math.abs(state.playerVehicle.speed) * 0.36)} km/h`;
     }
-    // Interaction prompt.
+    if (narrow) {
+      // Objective bar above the stick AND above the BAG / MAP touch
+      // buttons (their top edge is bottom 182): bottom 240, clear of the
+      // E button (its left edge is view.w - 86) and of the stick top
+      // (bottom 152). v6 tester fix: the old bottom-206 bar sat at
+      // y view.h-206..view.h-160 and the BAG / MAP circles (y 662..724
+      // at 390x844) covered its lower-right corner and part of the text.
+      const objW = Math.min(284, view.w - 106);
+      hctx.fillStyle = 'rgba(10,14,22,0.75)';
+      hctx.fillRect(12, view.h - 240, objW, 46);
+      text(fitText(`◆ ${state.objective}`, 15, objW - 24), 24, view.h - 212, 15, '#fde68a');
+      // Ammo pill, bottom-right: glyphs end 7+ px above the CAR/RUN
+      // buttons' bottom edge (bottom 40).
+      hctx.font = `bold 17px ${FONT}`;
+      const ammoW = hctx.measureText(ammoText).width;
+      hctx.fillStyle = 'rgba(10,14,22,0.75)';
+      hctx.beginPath();
+      if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w - 24 - ammoW - 16, view.h - 38, ammoW + 16, 30, 10);
+      else hctx.rect(view.w - 24 - ammoW - 16, view.h - 38, ammoW + 16, 30);
+      hctx.fill();
+      text(ammoText, view.w - 24, view.h - 15, 17, '#e2e8f0', 'right', true);
+    } else {
+      // Objective, bottom-left — text clipped to the bar so it can never
+      // run under the weapon readout at the bottom-right.
+      hctx.fillStyle = 'rgba(10,14,22,0.75)';
+      const objW = Math.min(560, view.w - 28);
+      hctx.fillRect(12, view.h - 58, objW, 46);
+      // Reserve the ammo readout's width when it would overlap the bar
+      // (mid-size windows: the bar ends at 572 but the ammo starts
+      // around view.w - 160).
+      hctx.font = `bold 17px ${FONT}`;
+      const ammoW = hctx.measureText(ammoText).width;
+      const ammoLeft = view.w - 24 - ammoW;
+      const objTextW = (12 + objW > ammoLeft)
+        ? Math.max(60, ammoLeft - 24 - 12) : objW - 24;
+      text(fitText(`◆ ${state.objective}`, 15, objTextW), 24, view.h - 30, 15, '#fde68a');
+      // Weapon and ammo, bottom-right.
+      text(ammoText, view.w - 24, view.h - 30, 17, '#e2e8f0', 'right', true);
+      if (state.playerVehicle) {
+        text(`${state.playerVehicle.name}  ${Math.round(Math.abs(state.playerVehicle.speed) * 0.36)} km/h`, view.w - 24, view.h - 56, 15, '#93c5fd', 'right', true);
+      }
+    }
+    // Interaction prompt. Narrow: a pill under the clock/GPS stack — at
+    // the bottom it sat under the RUN/CAR buttons and the stick (v6).
     if (state.prompt) {
-      text(state.prompt, view.w / 2, view.h - 84, 17, '#f8fafc', 'center', true);
+      if (narrow) {
+        const promptText = fitText(state.prompt, 17, Math.min(560, view.w - 40), true);
+        hctx.font = `bold 17px ${FONT}`;
+        const promptW = hctx.measureText(promptText).width;
+        hctx.fillStyle = 'rgba(10,14,22,0.78)';
+        hctx.beginPath();
+        if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - promptW / 2 - 12, 170, promptW + 24, 28, 14);
+        else hctx.rect(view.w / 2 - promptW / 2 - 12, 170, promptW + 24, 28);
+        hctx.fill();
+        text(promptText, view.w / 2, 190, 17, '#f8fafc', 'center', true);
+      } else {
+        text(state.prompt, view.w / 2, view.h - 84, 17, '#f8fafc', 'center', true);
+      }
     }
     hctx.restore();
-    drawMinimap(state);
+    drawMinimap(state, mmW, mmH);
     void time;
   }
 
@@ -533,17 +601,20 @@ export function createRenderer(canvas) {
   // v4.1, realistic scale (1 unit = 1 m): a motorboat hull is ~8 m long.
   // Speeds are angular rates along the run — range*speed stays 6-8 m/s,
   // a believable boat speed, not a speedboat on fast-forward.
+  // v6: scaled to the 2400x1800 map (x/4, y/3, range/3) — the water strip
+  // is x 2300..2400, y 450..1800, so the boats sail along it (x wobble
+  // +/-18 m stays inside the strip; ranges keep y inside the water).
   const BOATS = [
-    { x: 9300, yc: 1900, range: 320, speed: 0.022, phase: 0.0, kind: 'sail' },
-    { x: 9400, yc: 2500, range: 420, speed: 0.018, phase: 1.3, kind: 'fish' },
-    { x: 9350, yc: 3100, range: 380, speed: 0.02, phase: 2.1, kind: 'speed' },
-    { x: 9450, yc: 3700, range: 300, speed: 0.024, phase: 0.7, kind: 'sail' },
-    { x: 9300, yc: 4300, range: 460, speed: 0.016, phase: 2.8, kind: 'fish' },
-    { x: 9400, yc: 4900, range: 340, speed: 0.021, phase: 1.9, kind: 'speed' },
-    { x: 9350, yc: 2200, range: 260, speed: 0.026, phase: 3.6, kind: 'sail' },
-    { x: 9450, yc: 2800, range: 360, speed: 0.019, phase: 4.4, kind: 'fish' },
-    { x: 9300, yc: 3400, range: 300, speed: 0.023, phase: 5.1, kind: 'speed' },
-    { x: 9400, yc: 4600, range: 400, speed: 0.018, phase: 0.4, kind: 'sail' },
+    { x: 2325, yc: 633.3, range: 106.7, speed: 0.022, phase: 0.0, kind: 'sail' },
+    { x: 2350, yc: 833.3, range: 140, speed: 0.018, phase: 1.3, kind: 'fish' },
+    { x: 2337.5, yc: 1033.3, range: 126.7, speed: 0.02, phase: 2.1, kind: 'speed' },
+    { x: 2362.5, yc: 1233.3, range: 100, speed: 0.024, phase: 0.7, kind: 'sail' },
+    { x: 2325, yc: 1433.3, range: 153.3, speed: 0.016, phase: 2.8, kind: 'fish' },
+    { x: 2350, yc: 1633.3, range: 113.3, speed: 0.021, phase: 1.9, kind: 'speed' },
+    { x: 2337.5, yc: 733.3, range: 86.7, speed: 0.026, phase: 3.6, kind: 'sail' },
+    { x: 2362.5, yc: 933.3, range: 120, speed: 0.019, phase: 4.4, kind: 'fish' },
+    { x: 2325, yc: 1133.3, range: 100, speed: 0.023, phase: 5.1, kind: 'speed' },
+    { x: 2350, yc: 1533.3, range: 133.3, speed: 0.018, phase: 0.4, kind: 'sail' },
   ];
   const boatPositions = BOATS.map((b) => ({ x: b.x, y: b.yc, angle: 0, kind: b.kind }));
   function buildBoatGroup(T, kind) {

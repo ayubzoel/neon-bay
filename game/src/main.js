@@ -29,7 +29,7 @@ import { nearestInteractable, updatePlayer, validateHeroSpawn } from './player.j
 import { spawnNpcs, talkToNpc, pickpocket, updateNpcs } from './npc.js';
 import { updatePolice } from './police.js';
 import { buildSidePool, missionBrief, missionTitle, nextMainMission, objectiveLineFor, startMainMission, startSideQuest, updateEnemies, updateMissions, updatePickups } from './missions.js';
-import { updateBullets, updateCombat, BACKPACK_CAPACITY, backpackItems, cycleWeapon, switchWeapon } from './combat.js';
+import { updateBullets, updateCombat, BACKPACK_CAPACITY, backpackItems, cycleWeapon, switchWeapon, toggleHolster } from './combat.js';
 import { buyItem, selectOutfit, shopItemsFor, sleepAtSafeHouse, storeCurrentCar, takeOutCar } from './shops.js';
 import { hideActivityCanvas, startActivity, startRaceChallenge, startSwimChallenge, updateActivity, updateRaceChallenge, updateSwimChallenge } from './activities.js';
 import { applyAudioSettings, cycleRadio, getAudioState, getRadioChannel, initAudio, isMuted, playSfx, playTest, setAmbience, setEngine, setListenerPosition, setMusic, setMuted, setSiren } from './audio.js';
@@ -287,7 +287,7 @@ let btnMapShown = false;
 // zooming the camera, and 1–6 / clicking a row equips.
 function refreshBackpackPanel() {
   if (!state.backpackOpen) return;
-  ui.showBackpack(backpackItems(state), BACKPACK_CAPACITY);
+  ui.showBackpack(backpackItems(state), BACKPACK_CAPACITY, state.holstered);
 }
 function openBackpack() {
   if (state.screen !== SCREEN_PLAY || state.backpackOpen || state.showMap) return;
@@ -618,8 +618,8 @@ const ui = createUI({
     state.money = Math.max(0, state.money - 100);
     hero.hp = 100;
     hero.armor = 0;
-    hero.x = 560;
-    hero.y = 1620;
+    hero.x = 140;
+    hero.y = 540;
     // v5 spawn safety: the respawn point is validated like any other
     // spawn (it is clear today, but a map change must not strand Leo).
     window.__neonBay.lastSpawn = validateHeroSpawn(state, world);
@@ -688,6 +688,12 @@ const ui = createUI({
   },
   onBackpackSelect(key) {
     if (switchWeapon(state, key)) refreshBackpackPanel();
+  },
+  // v6: the panel's Holster / Draw button (also reachable on touch, where
+  // there is no H key) — same toggle as the H key in updateCombat.
+  onBackpackHolster() {
+    toggleHolster(state);
+    refreshBackpackPanel();
   },
 });
 
@@ -827,7 +833,7 @@ function stepPlay(dt, input) {
   if (gPressed && state.playerVehicle) {
     const hero = activeCharacter(state);
     // v4 meter scale: park within 30 m of the safe house (v3: 220).
-    if (Math.hypot(hero.x - 560, hero.y - 1620) < 30) storeCurrentCar(state);
+    if (Math.hypot(hero.x - 140, hero.y - 540) < 30) storeCurrentCar(state);
     else showMessage(state, t('main.parkNear'));
   }
   if (qPressed) {
@@ -1045,7 +1051,10 @@ function runGame() {
     setListenerPosition(heroNow.x, heroNow.y);
     // v4: the 3D figure wears the active weapon on its back (player.js
     // reads char.weaponKey) — keep it in step with the backpack's choice.
+    // v6: same for the holster state — drawn means in hand, holstered
+    // means stowed on the back with empty hands.
     heroNow.weaponKey = state.weapon;
+    heroNow.holstered = state.holstered;
     if (state.screen !== SCREEN_ACTIVITY) hideActivityCanvas();
     // v4: the HUD map button only shows during play.
     const wantMapBtn = state.screen === SCREEN_PLAY;
@@ -1137,8 +1146,8 @@ function runGame() {
     if (state.screen === SCREEN_TITLE) {
       // Slow pan over downtown behind the title panel.
       const t = now / 1000;
-      state.camera.x = 1500 + Math.sin(t * 0.07) * 500;
-      state.camera.y = 2100 + Math.cos(t * 0.05) * 300;
+      state.camera.x = 375 + Math.sin(t * 0.07) * 125;
+      state.camera.y = 900 + Math.cos(t * 0.05) * 100;
       accumulator += elapsed;
       while (accumulator >= STEP) {
         updateNpcs(state, world, STEP, rng);
@@ -1172,6 +1181,12 @@ function runGame() {
             if (input.pressed(`Digit${i + 1}`)) {
               if (switchWeapon(state, WEAPON_ORDER[i])) refreshBackpackPanel();
             }
+          }
+          // v6: H holsters / draws while the bag is open too (the panel
+          // has its own button for the same action).
+          if (input.pressedAction('holster')) {
+            toggleHolster(state);
+            refreshBackpackPanel();
           }
         }
         input.clearStaleEdges();
@@ -1261,6 +1276,17 @@ window.__neonBay = {
       refreshBackpackPanel();
       return key;
     },
+  },
+  // v6 holster debug API for automated tests: toggle / read the
+  // drawn-vs-holstered carry state, and draw explicitly.
+  holster: {
+    get isHolstered() { return !!state.holstered; },
+    toggle: () => {
+      const v = toggleHolster(state);
+      refreshBackpackPanel();
+      return v;
+    },
+    draw: () => { state.holstered = false; return false; },
   },
   // v4 audio debug API (Tone.js engine, buses, loops, music, radio).
   audio: {

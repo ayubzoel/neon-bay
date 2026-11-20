@@ -167,8 +167,8 @@ export function storeCurrentCar(state) {
   state.garage.push({ name: v.name, kind: v.kind, color: v.color, hp: v.hp });
   state.vehicles = state.vehicles.filter((x) => x !== v);
   state.playerVehicle = null;
-  hero.x = 560;
-  hero.y = 1620;
+  hero.x = 140;
+  hero.y = 540;
   showMessage(state, t('shop.parked', { name: v.name }));
   return true;
 }
@@ -179,7 +179,7 @@ export function takeOutCar(state, index) {
   if (!car) return false;
   state.garage.splice(index, 1);
   const v = {
-    id: 8000 + Math.floor(Math.random() * 900), kind: car.kind, x: 640, y: 1700, angle: 0,
+    id: 8000 + Math.floor(Math.random() * 900), kind: car.kind, x: 160, y: 566.7, angle: 0,
     speed: 0, z: 0, hp: car.hp, maxHp: 120, color: car.color, name: car.name,
     owner: 'player', modSpeed: state.mods.engine, modArmor: 0, waypoint: null, waitTimer: 0,
   };

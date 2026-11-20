@@ -3,16 +3,17 @@
 // character — there is no companion following him any more.
 //
 // v4 METER SCALE (Builder C): 1 world unit = 1 meter, Leo Vance is 1.8 m
-// tall on a 9600 x 5400 m map. The figure is built DIRECTLY in meters
+// tall on a 2400 x 1800 m map (v6: x/4, y/3 of the v5 9600 x 5400 m map). The figure is built DIRECTLY in meters
 // from config.js CHARACTER_HEIGHT (1.8) — proportions are fractions of
 // that height, so the mesh is exactly 1.8 units tall with no scale hack.
 // NPCs (npc.js) are 1.8 m and cars (vehicles.js) 4.5 m long, so Leo now
 // stands eye-to-eye with pedestrians and shoulder-high to a car roof,
 // as a 1.8 m human should. Camera distances (render.js/config.js,
-// 14/6/32 m) are tuned for this height. Speeds are meters per second:
-// walk 1.5, run 4.2, swim 1.0. On foot, crossing downtown takes minutes
-// — cars are the way to travel (their speeds live in vehicles.js).
-import { CHARACTER_HEIGHT, WEAPONS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+// 14/6/32 m) are tuned for this height. Speeds are meters per second
+// and live in config.js: walk 3.5, run 7.0, swim 1.5 (v6 — see below).
+// On foot, crossing downtown takes minutes — cars are the way to travel
+// (their speeds live in vehicles.js).
+import { CHARACTER_HEIGHT, PLAYER_RUN_SPEED, PLAYER_SWIM_SPEED, PLAYER_WALK_SPEED, SAFE_HOUSE, WEAPONS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import { activeCharacter } from './state.js';
 import { isWater } from './world.js';
 import { hairMat, pantsMat, shoeMat, skinMat, stdMat } from './textures.js';
@@ -39,10 +40,18 @@ const STEP_DISTANCE_M = 0.75;
 
 /** Leo Vance is 1.8 m tall — straight from config.js, the single source of truth for character height. */
 export const LEO_HEIGHT_UNITS = CHARACTER_HEIGHT;
-/** Walk / run / swim speeds in meters per second for a 1.8 m human. */
-const WALK_SPEED_MPS = 1.5;
-const RUN_SPEED_MPS = 4.2;
-const SWIM_SPEED_MPS = 1.0;
+/** Walk / run / swim speeds in meters per second — from config.js, the
+ *  single source of truth (v6: walk 3.5, run 7.0, swim 1.5; v5 had local
+ *  constants 1.5 / 4.2 / 1.0 that ignored config.js). */
+const WALK_SPEED_MPS = PLAYER_WALK_SPEED;
+const RUN_SPEED_MPS = PLAYER_RUN_SPEED;
+const SWIM_SPEED_MPS = PLAYER_SWIM_SPEED;
+
+/** v6 acceleration: how fast Leo reaches full speed (m/s^2) and how hard
+ *  he brakes when the input is released. Walk hits full speed in ~0.12 s,
+ *  sprint in ~0.23 s; stopping from a full sprint slides ~0.6 m. */
+const ACCEL_MPS2 = 30;
+const DECEL_MPS2 = 40;
 
 const RADIUS = 0.4;
 
@@ -114,6 +123,9 @@ export function validateHeroSpawn(state, world) {
   const res = findOpenGround(world, hero.x, hero.y, state.unlocked);
   hero.x = res.x;
   hero.y = res.y;
+  // v6: a teleport must not carry stale velocity into the new spot.
+  hero.vx = 0;
+  hero.vy = 0;
   if (state.camera) {
     state.camera.x = res.x;
     state.camera.y = res.y;
@@ -138,14 +150,20 @@ export function updatePlayer(state, world, dt, input) {
   const hero = activeCharacter(state);
   // Camera-relative movement (v2): W walks away from the camera, D strafes
   // right across the screen. The camera forward on the ground plane is
-  // (sin yaw, cos yaw); right is (cos yaw, -sin yaw).
+  // (sin yaw, cos yaw) — the camera sits at focus - forward*dist and looks
+  // along +forward (render.js). Screen-right is (-cos yaw, sin yaw):
+  // three.js builds the camera basis as right = up x (eye - target), so
+  // world +X reads as screen-LEFT when the camera looks along +Z. The v5
+  // right vector (cos yaw, -sin yaw) was the exact negation — joystick
+  // right (and D) strafed left on screen at every yaw. Camera orbit is
+  // untouched: drag still orbits the same way (input.js / main.js).
   const yaw = (state.camera && state.camera.yaw) || 0;
   const fwd = -input.moveY();
   const str = input.moveX();
   const fx = Math.sin(yaw);
   const fy = Math.cos(yaw);
-  const rx = Math.cos(yaw);
-  const ry = -Math.sin(yaw);
+  const rx = -Math.cos(yaw);
+  const ry = Math.sin(yaw);
   let mx = fx * fwd + rx * str;
   let my = fy * fwd + ry * str;
   const len = Math.hypot(mx, my);
@@ -155,21 +173,39 @@ export function updatePlayer(state, world, dt, input) {
   }
   const inWater = isWater(hero.x, hero.y);
   hero.swimming = inWater;
-  // v4 meter scale: a 1.8 m human walks ~1.5 m/s and runs ~4.2 m/s — the
-  // v3 config speeds (150/235 u/s) would be 540/846 km/h in meters.
-  // Gameplay consequence: crossing downtown on foot now takes minutes,
-  // not seconds — cars are the way to travel (their speeds live in
-  // vehicles.js/config.js, outside this build).
+  // v6 speeds (config.js): walk 3.5, run 7.0, swim 1.5 m/s. Crossing
+  // downtown on foot still takes minutes, not seconds — cars are the way
+  // to travel (their speeds live in vehicles.js/config.js).
   const speed = inWater ? SWIM_SPEED_MPS : input.run ? RUN_SPEED_MPS : WALK_SPEED_MPS;
-  hero.moving = len > 0.15;
-  if (hero.moving) hero.angle = Math.atan2(my, mx);
+  // v6 acceleration: velocity eases toward the target instead of snapping
+  // to it, so Leo speeds up in ~0.1-0.2 s and stops within ~0.6 m of
+  // release instead of sliding. hero.vx/vy persist on the hero object
+  // (validateHeroSpawn zeroes them on teleport).
+  const tvx = mx * speed;
+  const tvy = my * speed;
+  const vx = hero.vx || 0;
+  const vy = hero.vy || 0;
+  const dvx = tvx - vx;
+  const dvy = tvy - vy;
+  const dv = Math.hypot(dvx, dvy);
+  const maxStep = (len > 0.05 ? ACCEL_MPS2 : DECEL_MPS2) * dt;
+  if (dv <= maxStep) {
+    hero.vx = tvx;
+    hero.vy = tvy;
+  } else if (dv > 0) {
+    hero.vx = vx + (dvx / dv) * maxStep;
+    hero.vy = vy + (dvy / dv) * maxStep;
+  }
+  const vel = Math.hypot(hero.vx, hero.vy);
+  hero.moving = vel > 0.15;
+  if (hero.moving) hero.angle = Math.atan2(hero.vy, hero.vx);
   if (input.pressedAction('jump') && !inWater) hero.jump = 0.28;
   if (hero.jump > 0) hero.jump -= dt;
 
   // v4 audio: footsteps while walking/running on land — one soft tap per
   // stride, so the pace is audible without a per-frame sound call.
   if (hero.moving && !inWater) {
-    hero.stepAcc = (hero.stepAcc || 0) + speed * dt;
+    hero.stepAcc = (hero.stepAcc || 0) + vel * dt;
     if (hero.stepAcc >= STEP_DISTANCE_M) {
       hero.stepAcc = 0;
       playSfx('step');
@@ -185,7 +221,7 @@ export function updatePlayer(state, world, dt, input) {
     hero.stamina = Math.min(100, hero.stamina + dt * 12);
   }
 
-  moveWithCollision(state, world, hero, mx * speed * dt, my * speed * dt);
+  moveWithCollision(state, world, hero, hero.vx * dt, hero.vy * dt);
 
   // v5b terrain-following: the hero's feet follow the relief. The ground
   // height comes from world.groundHeightAt (the same mound ellipsoids
@@ -210,7 +246,7 @@ export function nearestInteractable(state, world) {
     const d = Math.hypot(shop.x + 45 - hero.x, shop.y + 35 - hero.y);
     if (d < 110) out.push({ kind: 'shop', shop, dist: d, label: t('player.enterShop', { name: shop.name }) });
   }
-  const doorD = Math.hypot(495 - hero.x, 1610 - hero.y);
+  const doorD = Math.hypot(SAFE_HOUSE.door.x - hero.x, SAFE_HOUSE.door.y - hero.y);
   if (doorD < 70) out.push({ kind: 'safehouse', dist: doorD, label: t('player.enterSafehouse') });
   for (const spot of world.activitySpots) {
     const d = Math.hypot(spot.x - hero.x, spot.y - hero.y);
@@ -269,12 +305,14 @@ function jacketMaterial(T, color) {
 }
 
 /**
- * v4.1: the active weapon, worn on Leo's back — built in METERS, like
- * the figure. Long guns (rifle, shotgun, bazooka) and the bat are slung
- * diagonally across the back; the pistol sits holstered at the hip; a
- * grenade clips to the belt. Real sizes: a rifle ~0.95 m, a bazooka
- * ~1.15 m, a bat ~0.85 m, a pistol ~0.20 m. Built once per weapon
- * switch and cached by drawCharacter in userData.
+ * v4.1 (v6: stowed only): the active weapon, worn on Leo's back while it
+ * is holstered or he is swimming — built in METERS, like the figure.
+ * Long guns (rifle, shotgun, bazooka) and the bat are slung diagonally
+ * across the back; the pistol sits holstered at the hip; a grenade clips
+ * to the belt. Real sizes: a rifle ~0.95 m, a bazooka ~1.15 m, a bat
+ * ~0.85 m, a pistol ~0.20 m. Built once per weapon switch and cached by
+ * drawCharacter in userData. When the weapon is drawn it lives in the
+ * hand instead (buildHandWeapon) and this is not built at all.
  */
 function buildBackWeapon(T, key) {
   if (!T) return null;
@@ -345,8 +383,10 @@ function buildCharacterFigure(T, char) {
   const armLen = 0.34 * H;
   const armL = limb(0.11, armLen, 0.11, jacket, 0, shoulderY, -0.275, 0, -armLen / 2, 0);
   const armR = limb(0.11, armLen, 0.11, jacket, 0, shoulderY, 0.275, 0, -armLen / 2, 0);
-  armL.add(box3(T, 0.1, 0.09, 0.1, skin, 0, -armLen - 0.02, 0));
-  armR.add(box3(T, 0.1, 0.09, 0.1, skin, 0, -armLen - 0.02, 0));
+  const handL = box3(T, 0.1, 0.09, 0.1, skin, 0, -armLen - 0.02, 0);
+  const handR = box3(T, 0.1, 0.09, 0.1, skin, 0, -armLen - 0.02, 0);
+  armL.add(handL);
+  armR.add(handR);
   // Torso: jacket, shirt front on the +X face, collar.
   const torsoH = 0.32 * H;
   const torsoY = 0.63 * H;
@@ -373,9 +413,87 @@ function buildCharacterFigure(T, char) {
   g.add(eyeR);
   g.add(nose);
   g.userData = {
-    legL, legR, armL, armR, body,
+    legL, legR, armL, armR, body, handR,
     armLMesh: armL.children[0], armRMesh: armR.children[0],
   };
+  return g;
+}
+
+/**
+ * v6: the weapon IN Leo's right hand — built in METERS, like the figure,
+ * from three.js geometry only (no external assets). The group's origin
+ * is the grip, so it sits exactly where the hand is, and the barrel
+ * runs forward, angled ~30° out to Leo's right, so it points where he
+ * aims while still reading side-on from the camera behind him.
+ * Each of the six backpack weapons reads differently at a glance:
+ * pistol short and light, rifle long with a magazine, shotgun thick
+ * with a pump, bat a long wooden club, grenade a small green ball,
+ * bazooka a fat tube with a red warhead. The accent colour is the
+ * weapon's own config colour (config.js WEAPONS).
+ */
+function buildHandWeapon(T, key) {
+  if (!T) return null;
+  const def = WEAPONS[key] || WEAPONS.pistol;
+  const g = new T.Group();
+  const metal = (hex) => stdMat(`hw-${key}-${hex}`, () => new T.MeshStandardMaterial({
+    color: hex, roughness: 0.55, metalness: 0.45,
+  }));
+  const dark = metal('#23272e');
+  const accent = metal(def.color);
+  const wood = metal('#8a5a2b');
+  function part(geo, mat, x, y, z, rz = 0) {
+    const m = new T.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    if (rz) m.rotation.z = rz;
+    g.add(m);
+    return m;
+  }
+  const box = (w, h, d, mat, x, y, z, rz = 0) => part(new T.BoxGeometry(w, h, d), mat, x, y, z, rz);
+  const tube = (r, len, mat, x, y, z) => part(new T.CylinderGeometry(r, r, len, 12), mat, x, y, z, Math.PI / 2);
+  if (key === 'pistol') {
+    // Oversized on purpose (~0.3 m): a real 0.2 m pistol is a few dark
+    // pixels at the 6.5 m third-person distance. Light slide so it reads
+    // against the road and Leo's shadow; it sits clear above the hand.
+    box(0.26, 0.06, 0.045, accent, 0.07, 0.075, 0); // slide
+    box(0.04, 0.06, 0.045, dark, 0.18, 0.075, 0); // muzzle band
+    box(0.02, 0.02, 0.012, dark, 0.15, 0.11, 0); // front sight
+    box(0.06, 0.15, 0.05, dark, -0.02, -0.05, 0, 0.12); // grip
+    box(0.05, 0.014, 0.03, dark, 0.035, 0.005, 0); // trigger guard
+  } else if (key === 'rifle') {
+    box(0.3, 0.07, 0.05, dark, 0, 0.03, 0); // receiver
+    tube(0.016, 0.5, dark, 0.4, 0.035, 0); // barrel
+    box(0.24, 0.06, 0.048, wood, 0.24, 0.03, 0); // handguard
+    box(0.17, 0.1, 0.045, wood, -0.22, 0.01, 0); // stock
+    box(0.055, 0.13, 0.04, accent, 0.03, -0.07, 0, 0.15); // magazine
+    box(0.05, 0.1, 0.04, dark, -0.09, -0.05, 0, 0.2); // grip
+    box(0.03, 0.04, 0.02, dark, 0.05, 0.085, 0); // rear sight
+  } else if (key === 'shotgun') {
+    box(0.28, 0.085, 0.06, dark, 0, 0.03, 0); // receiver
+    tube(0.03, 0.55, dark, 0.4, 0.04, 0); // thick barrel
+    box(0.2, 0.075, 0.065, accent, 0.22, -0.005, 0); // pump
+    box(0.19, 0.11, 0.05, wood, -0.23, 0, 0); // stock
+    box(0.05, 0.1, 0.04, dark, -0.08, -0.05, 0, 0.2); // grip
+  } else if (key === 'melee') {
+    // Baseball bat: thin handle at the hand, thick barrel forward.
+    // CylinderGeometry's top (+Y) becomes +X after the -90° Z turn.
+    part(new T.CylinderGeometry(0.045, 0.028, 0.85, 12), wood, 0.42, 0, 0, -Math.PI / 2);
+    part(new T.SphereGeometry(0.032, 10, 8), dark, -0.01, 0, 0); // knob
+  } else if (key === 'grenade') {
+    part(new T.SphereGeometry(0.055, 12, 10), accent, 0, -0.03, 0); // body
+    part(new T.CylinderGeometry(0.015, 0.015, 0.04, 8), dark, 0, 0.035, 0); // fuse
+    box(0.02, 0.07, 0.015, dark, 0.035, 0.005, 0, 0.2); // lever
+  } else if (key === 'bazooka') {
+    tube(0.07, 1.15, dark, 0.28, 0.03, 0); // tube
+    part(new T.ConeGeometry(0.09, 0.28, 12), accent, 0.95, 0.03, 0, -Math.PI / 2); // warhead
+    tube(0.095, 0.14, dark, -0.32, 0.03, 0); // rear flare
+    box(0.05, 0.1, 0.045, dark, 0.05, -0.06, 0, 0.2); // grip
+    box(0.04, 0.05, 0.02, accent, 0.3, 0.125, 0); // sight
+  }
+  // The barrel runs forward (+X) but angled ~30° out to Leo's right, so
+  // from the third-person camera behind him the gun is seen side-on
+  // instead of end-on (a straight-forward barrel foreshortens to a dot
+  // and hides behind the torso). The grip stays at the group's origin.
+  g.rotation.y = -0.55;
   return g;
 }
 
@@ -396,18 +514,36 @@ export function drawCharacter(pool, char, isActive, time) {
   mesh.position.set(char.x, (char.swimming ? -0.05 : groundY) + lift, char.y);
   mesh.rotation.y = -char.angle;
   mesh.visible = true;
-  // v4: the active weapon rides on Leo's back (main.js keeps
-  // char.weaponKey in step with state.weapon), so what the backpack holds
-  // is visible in the world — long guns slung diagonally, the bat upright,
-  // the pistol holstered at the hip, a grenade clipped to the belt.
+  // v6: two carry states, one weapon, one place. Drawn (the default) —
+  // the active weapon is IN Leo's right hand, a child of the arm pivot
+  // so it follows the walk/run swing and points where he faces. Stowed
+  // (holstered with H, or swimming) — the weapon rides on his back and
+  // his hands are empty. main.js keeps char.weaponKey and
+  // char.holstered in step with state.weapon / state.holstered.
   const ud0 = mesh.userData || {};
   const weaponKey = char.weaponKey || 'pistol';
-  if (ud0.backWeaponKey !== weaponKey) {
+  const stowed = !!char.holstered || !!char.swimming;
+  const backKey = stowed ? weaponKey : null;
+  if (ud0.backWeaponKey !== backKey) {
     if (ud0.backWeapon && typeof mesh.remove === 'function') mesh.remove(ud0.backWeapon);
-    ud0.backWeaponKey = weaponKey;
-    ud0.backWeapon = buildBackWeapon(T, weaponKey);
+    ud0.backWeaponKey = backKey;
+    ud0.backWeapon = backKey ? buildBackWeapon(T, backKey) : null;
     if (ud0.backWeapon && typeof mesh.add === 'function') mesh.add(ud0.backWeapon);
   }
+  const handKey = stowed ? null : weaponKey;
+  if (ud0.handWeaponKey !== handKey) {
+    if (ud0.handWeapon && ud0.armR && typeof ud0.armR.remove === 'function') ud0.armR.remove(ud0.handWeapon);
+    ud0.handWeaponKey = handKey;
+    ud0.handWeapon = handKey ? buildHandWeapon(T, handKey) : null;
+    if (ud0.handWeapon && ud0.armR && ud0.handR && typeof ud0.armR.add === 'function') {
+      ud0.handWeapon.position.copy(ud0.handR.position);
+      ud0.armR.add(ud0.handWeapon);
+    }
+  }
+  // While a weapon is in hand the right arm is held ~18° out from the
+  // body, so the gun clears the torso's silhouette and reads from the
+  // camera behind Leo; holstered or swimming, the arm hangs normally.
+  if (ud0.armR) ud0.armR.rotation.x = handKey ? -0.32 : 0;
   // Outfit changes (wardrobe / neon paint) swap the jacket material on
   // the torso and arms to the cached material for the new colour.
   const ud = mesh.userData || {};

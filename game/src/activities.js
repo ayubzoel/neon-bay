@@ -89,27 +89,27 @@ export const ACTIVITY_KINDS = ['pool', 'golf', 'race', 'swim', 'darts', 'gym', '
 // audio.js owns the context, the buses and the mute/volume settings.
 
 // Race: 5 checkpoints forming a loop on real downtown roads (v3 world):
-// west along street 2600, south down avenue 1500, east along street 4400,
-// north up avenue 3900, and back to the start — the loop closes by
+// west along street 866.7, south down avenue 375, east along street 1466.7,
+// north up avenue 975, and back to the start — the loop closes by
 // returning to where it began. Every checkpoint sits on an intersection.
 export const RACE_CHECKPOINTS = [
-  { x: 2700, y: 2600 },
-  { x: 1500, y: 2600 },
-  { x: 1500, y: 4400 },
-  { x: 3900, y: 4400 },
-  { x: 2700, y: 2600 },
+  { x: 675, y: 866.7 },
+  { x: 375, y: 866.7 },
+  { x: 375, y: 1466.7 },
+  { x: 975, y: 1466.7 },
+  { x: 675, y: 866.7 },
 ];
 
-// Swim: 6 buoys in the open water along the far east edge (x 9300-9500,
-// y 1700-4800) — the sea east of Sunset Beach. Start at the Pier 9 Swim
-// spot on the sand (9050, 2642) and swim east into the water to reach them.
+// Swim: 6 buoys in the open water along the far east edge (x 2332-2375,
+// y 566.7-1600) — the sea east of Sunset Beach. Start at the Pier 9 Swim
+// spot on the sand (2262.5, 880.7) and swim east into the water to reach them.
 export const SWIM_BUOYS = [
-  { x: 9350, y: 1700 },
-  { x: 9500, y: 2300 },
-  { x: 9330, y: 2900 },
-  { x: 9490, y: 3500 },
-  { x: 9350, y: 4200 },
-  { x: 9500, y: 4800 },
+  { x: 2337.5, y: 566.7 },
+  { x: 2375, y: 766.7 },
+  { x: 2332.5, y: 966.7 },
+  { x: 2372.5, y: 1166.7 },
+  { x: 2337.5, y: 1400 },
+  { x: 2375, y: 1600 },
 ];
 
 const FALLBACK_VIEW = { x: 0, y: 0, w: 1280, h: 720 };

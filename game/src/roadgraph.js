@@ -13,9 +13,9 @@
 // (was 600 x 450 m), so the map is a real city grid, not a few giant roads.
 //
 // The graph also builds what world.js does not know about: the square ring
-// road around the whole map, the two viaducts (avenue 3300 downtown and
-// avenue 7200 at the beach — the road itself rises onto the deck), the two
-// hill roads into Cinder Peaks (climbs 1500/4500 rise ~20 m and fall again),
+// road around the whole map, the two viaducts (avenue 825 downtown and
+// avenue 1800 at the beach — the road itself rises onto the deck), the two
+// hill roads into Cinder Peaks (climbs 375/1125 rise ~20 m and fall again),
 // and the traffic lights at every major junction. Elevation lives on the
 // nodes (z) and segments (za/zb); cars, police and pedestrians read it.
 //
@@ -52,28 +52,28 @@ export const SIDEWALK_OFFSET = ROAD_RES_SIDEWALK_OFFSET;
 export const SIDEWALK_HALF = SIDEWALK_WIDTH / 2;
 
 // The square ring road: an arterial loop around the whole map. Its legs sit
-// just inside the map edge (80 m west/north, 9170 m east, 5320 m south) so
+// just inside the map edge (20 m west/north, 2292.5 m east, 1773.3 m south) so
 // no road ends at the map edge any more — every road terminates into the
 // ring. The ring crosses the district walls at three points; those crossings
 // are gate nodes (same unlock logic as the four staffed gates: beach after
 // main mission 20, peaks after 40), so the loop closes once the districts
 // open. NOTE for world.js: the wall solids need matching gaps at
-// (80,1350), (9170,1350) and (6000,5320), or the player cannot drive the
+// (20,450), (2292.5,450) and (1500,1773.3), or the player cannot drive the
 // ring through the walls even after unlocking (traffic follows the graph
 // and is unaffected, the player's car collides with the wall).
-export const RING = { west: 80, east: 9170, north: 80, south: 5320 };
+export const RING = { west: 20, east: 2292.5, north: 26.7, south: 1773.3 };
 
 // Viaducts: the avenue itself rises onto the deck. Ramps are one city
 // block long; the deck is 9 m (downtown) / 8 m (beach) above the street.
 // Hill roads: the climb rises ~20 m mid-way and falls again (a sine
 // profile), bridging over the peaks roads it crosses.
 export const VIADUCTS = [
-  { x: 3300, from: 1700, to: 5250, deckZ: 9, kind: 'viaduct' },
-  { x: 7200, from: 2000, to: 5000, deckZ: 8, kind: 'viaduct' },
+  { x: 825, from: 566.7, to: 1750, deckZ: 9, kind: 'viaduct' },
+  { x: 1800, from: 666.7, to: 1666.7, deckZ: 8, kind: 'viaduct' },
 ];
 export const HILL_CLIMBS = [
-  { x: 1500, from: 80, to: 1350, height: 20, kind: 'hill' },
-  { x: 4500, from: 80, to: 1350, height: 20, kind: 'hill' },
+  { x: 375, from: 26.7, to: 450, height: 20, kind: 'hill' },
+  { x: 1125, from: 26.7, to: 450, height: 20, kind: 'hill' },
 ];
 
 function nodeKey(x, y, level) {
@@ -137,78 +137,77 @@ function prepareRoads(roads) {
 
   // ---- Dense downtown grid (~150 m blocks) ---------------------------
   // Existing avenues/streets keep their centrelines; new ones split the
-  // gaps. The safe house (420-570, 1500-1610) and the airport runway
-  // (4050-5250, 4650-4770) are never crossed: those roads are split around
+  // gaps. The safe house (105-142.5, 500-536.7) and the airport runway
+  // (1012.5-1312.5, 1550-1590) are never crossed: those roads are split around
   // them instead, so the house and the runway stay intact.
-  const avenues = [...new Set(roads.filter((r) => r.vertical && r.y >= 1350 && r.x + r.w / 2 < 6000)
+  const avenues = [...new Set(roads.filter((r) => r.vertical && r.y >= 450 && r.x + r.w / 2 < 1500)
     .map((r) => r.x + r.w / 2))].sort((a, b) => a - b);
-  const streets = [...new Set(roads.filter((r) => !r.vertical && r.y >= 1350 && r.x < 6000)
+  const streets = [...new Set(roads.filter((r) => !r.vertical && r.y >= 450 && r.x < 1500)
     .map((r) => r.y + r.h / 2))].sort((a, b) => a - b);
   // Keep-outs: a new avenue must not run through a shop lot — the shop
   // building sits on its lot, and a road through it would put the door on
-  // the asphalt. Ironworks Arms (1200), Neon Diner (1800), Velvet Thread
-  // (2400) and Turbo Works (3600) keep a 600 m block; the neighbouring
-  // new avenues still densify the area. Avenue 4650 is split around the
-  // airport runway, like street 4700 already is.
-  const SKIP_AVENUES = new Set([1200, 1800, 2400, 3600]);
-  const avenueCuts = [0, ...avenues, 6000];
+  // the asphalt. Ironworks Arms (300), Neon Diner (450), Velvet Thread
+  // (600) and Turbo Works (900) keep a 150 m block; the neighbouring
+  // new avenues still densify the area. Avenue 1162.5 is split around the
+  // airport runway, like street 1566.7 already is.
+  const SKIP_AVENUES = new Set([300, 450, 600, 900]);
+  const avenueCuts = [0, ...avenues, 1500];
   for (let i = 0; i + 1 < avenueCuts.length; i += 1) {
     for (const x of splitGap(avenueCuts[i], avenueCuts[i + 1])) {
       if (SKIP_AVENUES.has(x)) continue;
-      if (x === 450) {
-        vRoad(450, 1350, 150); // north of the safe house
-        vRoad(450, 1610, RING.south - 1610); // south of it
-      } else if (x === 4650) {
-        vRoad(4650, 1350, 4650 - 1350); // north of the runway
-        vRoad(4650, 4770, RING.south - 4770); // south of it
+      if (x === 112.5) {
+        vRoad(112.5, 450, 50); // north of the safe house
+        vRoad(112.5, 536.7, RING.south - 536.7); // south of it
+      } else if (x === 1162.5) {
+        vRoad(1162.5, 450, 1162.5 - 450); // north of the runway
+        vRoad(1162.5, 1590, RING.south - 1590); // south of it
       } else {
-        vRoad(x, 1350, RING.south - 1350);
+        vRoad(x, 450, RING.south - 450);
       }
     }
   }
-  const streetCuts = [1350, ...streets, 5400];
+  const streetCuts = [450, ...streets, 1800];
   for (let i = 0; i + 1 < streetCuts.length; i += 1) {
     for (const y of splitGap(streetCuts[i], streetCuts[i + 1])) {
-      if (y === 1525) {
-        hRoad(80, 1525, 340); // west of the safe house
-        hRoad(570, 1525, 6000 - 570); // east of it
-      } else if (y === 4700) {
-        hRoad(80, 4700, 4050 - 80); // west of the runway
-        hRoad(5250, 4700, 6000 - 5250); // east of it
+      if (y === 508.3) {
+        hRoad(20, 508.3, 85); // west of the safe house
+        hRoad(142.5, 508.3, 1500 - 142.5); // east of it
+      } else if (y === 1566.7) {
+        hRoad(20, 1566.7, 1012.5 - 20); // west of the runway
+        hRoad(1312.5, 1566.7, 1500 - 1312.5); // east of it
       } else {
-        // (v4 re-check: with the current base streets the gaps split to
-        // 1850/2000 and 3650/3800, so Iron Paradise Gym + Downtown Temple
-        // at y=1800 and Sunset Mosque at y=3600 already sit 50 m clear of
-        // the nearest new street — no shift needed.)
-        hRoad(80, y, 6000 - 80);
+        // (v6: the base streets are already ~150 m apart, so splitGap
+        // adds no new streets at all — this branch is kept only so a
+        // future wider gap still densifies instead of staying empty.)
+        hRoad(20, y, 1500 - 20);
       }
     }
   }
 
   // ---- Beach: resort spacing, avenues placed between the hotel rows ---
-  // Hotels sit at x 6500/7300/8100 (120 wide) and y 1700/2750/4150 (160
+  // Hotels sit at x 1625/1825/2025 (30 wide) and y 566.7/916.7/1383.3 (53
   // tall); the new avenues run in the gaps between the hotel columns and
   // the new roads in the gaps between the hotel rows, so no road crosses
   // a hotel.
-  for (const x of [6200, 6900, 7700, 8500, 9000]) vRoad(x, 1350, RING.south - 1350);
-  // Beach roads: 1930 (not 1950) keeps 28 m clear of the Old Lighthouse
-  // at (8700, 1958); 3250 (not 3200) keeps the Harbor Chapel at
-  // (7550, 3200) clear. The rest run between the hotel rows as before.
-  for (const y of [1550, 1930, 2300, 2450, 3250, 3500, 3800, 4600, 4800, 5200]) {
-    hRoad(6000, y, RING.east - 6000);
+  for (const x of [1550, 1725, 1925, 2125, 2250]) vRoad(x, 450, RING.south - 450);
+  // Beach roads: 643.3 (not 650) keeps ~9 m clear of the Old Lighthouse
+  // at (2175, 652.7); 1083.3 (not 1066.7) keeps the Harbor Chapel at
+  // (1887.5, 1066.7) clear. The rest run between the hotel rows as before.
+  for (const y of [516.7, 643.3, 766.7, 816.7, 1083.3, 1166.7, 1266.7, 1533.3, 1600, 1733.3]) {
+    hRoad(1500, y, RING.east - 1500);
   }
 
   // ---- Peaks: mountain spacing (a dense grid makes no sense on a mountain)
-  // New horizontal roads; y=150/270 are split around the lake (x 6600-8000).
-  // y=270 (not 300) keeps the Ski Lodge and the peak cabins at y=300 clear;
-  // y=630 (not 600) keeps the cabin at (1630, 600) clear.
-  for (const y of [630, 750, 1050, 1200]) hRoad(80, y, RING.east - 80);
-  for (const y of [150, 270]) {
-    hRoad(80, y, 6560 - 80);
-    hRoad(8040, y, RING.east - 8040);
+  // New horizontal roads; y=50/90 are split around the lake (x 1650-2000).
+  // y=90 (not 100) keeps the Ski Lodge and the peak cabins at y=100 clear;
+  // y=210 (not 200) keeps the cabin at (407.5, 200) clear.
+  for (const y of [210, 250, 350, 400]) hRoad(20, y, RING.east - 20);
+  for (const y of [50, 90]) {
+    hRoad(20, y, 1640 - 20);
+    hRoad(2010, y, RING.east - 2010);
   }
-  // 8850 (not 9000): the peak cabin at (9000, 560) sits on the 9000 line.
-  for (const x of [2400, 5400, 6300, 8100, 8850]) vRoad(x, RING.north, 1350 - RING.north);
+  // 2212.5 (not 2250): the peak cabin at (2250, 186.7) sits on the 2250 line.
+  for (const x of [600, 1350, 1575, 2025, 2212.5]) vRoad(x, RING.north, 450 - RING.north);
 
   // ---- The square ring road (arterial, 4 lanes + median) --------------
   addRoad({ x: RING.west - ROAD_ART_HALF, y: RING.north - ROAD_ART_HALF, w: ROAD_ART_HALF * 2, h: RING.south - RING.north + ROAD_ART_HALF * 2, vertical: true, type: 'arterial', major: true });
@@ -239,9 +238,9 @@ export function buildRoadGraph(roads, gateNodes, districtAt) {
   // Ring crossings over the district walls use the same gate mechanism as
   // the staffed gates (see RING above).
   const allGates = [...(gateNodes || []),
-    { x: RING.west, y: 1350, district: 2 },
-    { x: RING.east, y: 1350, district: 2 },
-    { x: 6000, y: RING.south, district: 1 },
+    { x: RING.west, y: 450, district: 2 },
+    { x: RING.east, y: 450, district: 2 },
+    { x: 1500, y: RING.south, district: 1 },
   ];
 
   const nodes = [];

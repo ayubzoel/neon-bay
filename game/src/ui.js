@@ -27,7 +27,7 @@ addStrings('en', {
   'menu.continue': 'Continue',
   'menu.howTo': 'How to Play',
   'menu.settings': 'Settings',
-  'menu.howHtml': '<b>WASD / Arrows</b> move · <b>Mouse</b> aim · <b>Click</b> shoot · <b>E</b> interact / talk · <b>F</b> enter or exit a vehicle · <b>R</b> reload · <b>Q</b> pickpocket · <b>Shift</b> run · <b>Space</b> jump · <b>1–6</b> weapons · <b>B</b> backpack · <b>Scroll</b> cycle weapon (when the backpack is open) · <b>M</b> map · <b>N</b> mute · <b>V</b> radio station · <b>Esc</b> pause.<br>Drag mouse to orbit the camera, scroll to zoom. On phones: left stick to move, on-screen buttons to shoot, enter, interact and run.',
+  'menu.howHtml': '<b>WASD / Arrows</b> move · <b>Mouse</b> aim · <b>Click</b> shoot · <b>E</b> interact / talk · <b>F</b> enter or exit a vehicle · <b>R</b> reload · <b>Q</b> pickpocket · <b>Shift</b> run · <b>Space</b> jump · <b>1–6</b> weapons · <b>B</b> backpack · <b>H</b> holster / draw weapon · <b>Scroll</b> cycle weapon (when the backpack is open) · <b>M</b> map · <b>N</b> mute · <b>V</b> radio station · <b>Esc</b> pause.<br>Drag mouse to orbit the camera, scroll to zoom. On phones: left stick to move, on-screen buttons to shoot, enter, interact and run.',
   'pause.title': 'Paused',
   'pause.text': 'Neon Bay waits for no one — except right now.',
   'pause.resume': 'Resume',
@@ -75,7 +75,9 @@ addStrings('en', {
   'wardrobe.everyday': 'Everyday look',
   'wardrobe.fresh': 'A fresh {name} look',
   'backpack.title': 'Backpack — {owned} / {capacity} weapons',
-  'backpack.hint': 'Click a weapon to equip it · keys 1–6 switch · mouse wheel cycles · B closes',
+  'backpack.hint': 'Click a weapon to equip it · keys 1–6 switch · mouse wheel cycles · H holsters / draws · B closes',
+  'backpack.holster': 'Holster weapon (H)',
+  'backpack.draw': 'Draw weapon (H)',
   'backpack.inHand': ' — in hand',
   'backpack.noAmmo': 'Damage {damage} · no ammo needed',
   'backpack.ammo': 'Damage {damage} · Mag {mag}/{magSize} · Reserve {ammo} rounds',
@@ -129,6 +131,7 @@ addStrings('en', {
   'settings.controls.pickpocket': 'Pickpocket',
   'settings.controls.park': 'Park car (safe house)',
   'settings.controls.backpack': 'Backpack',
+  'settings.controls.holster': 'Holster / draw weapon',
   'settings.controls.map': 'Map',
   'settings.controls.pause': 'Pause',
   'settings.controls.mute': 'Mute / unmute',
@@ -173,7 +176,7 @@ addStrings('id', {
   'menu.continue': 'Lanjutkan',
   'menu.howTo': 'Cara Bermain',
   'menu.settings': 'Pengaturan',
-  'menu.howHtml': '<b>WASD / Panah</b> bergerak · <b>Mouse</b> membidik · <b>Klik</b> menembak · <b>E</b> interaksi / bicara · <b>F</b> masuk atau keluar kendaraan · <b>R</b> isi ulang · <b>Q</b> copet · <b>Shift</b> lari · <b>Spasi</b> lompat · <b>1–6</b> senjata · <b>B</b> tas · <b>Scroll</b> ganti senjata (saat tas terbuka) · <b>M</b> peta · <b>N</b> bisukan · <b>V</b> stasiun radio · <b>Esc</b> jeda.<br>Seret mouse untuk memutar kamera, scroll untuk zoom. Di HP: stik kiri untuk bergerak, tombol layar untuk menembak, masuk, interaksi, dan lari.',
+  'menu.howHtml': '<b>WASD / Panah</b> bergerak · <b>Mouse</b> membidik · <b>Klik</b> menembak · <b>E</b> interaksi / bicara · <b>F</b> masuk atau keluar kendaraan · <b>R</b> isi ulang · <b>Q</b> copet · <b>Shift</b> lari · <b>Spasi</b> lompat · <b>1–6</b> senjata · <b>B</b> tas · <b>H</b> simpan / pegang senjata · <b>Scroll</b> ganti senjata (saat tas terbuka) · <b>M</b> peta · <b>N</b> bisukan · <b>V</b> stasiun radio · <b>Esc</b> jeda.<br>Seret mouse untuk memutar kamera, scroll untuk zoom. Di HP: stik kiri untuk bergerak, tombol layar untuk menembak, masuk, interaksi, dan lari.',
   'pause.title': 'Jeda',
   'pause.text': 'Neon Bay tidak menunggu siapa pun — kecuali sekarang.',
   'pause.resume': 'Lanjutkan',
@@ -220,7 +223,9 @@ addStrings('id', {
   'wardrobe.everyday': 'Penampilan sehari-hari',
   'wardrobe.fresh': 'Penampilan {name} yang segar',
   'backpack.title': 'Tas — {owned} / {capacity} senjata',
-  'backpack.hint': 'Klik senjata untuk menggunakannya · tombol 1–6 mengganti · roda mouse menggilir · B menutup',
+  'backpack.hint': 'Klik senjata untuk menggunakannya · tombol 1–6 mengganti · roda mouse menggilir · H menyimpan / memegang · B menutup',
+  'backpack.holster': 'Simpan senjata (H)',
+  'backpack.draw': 'Pegang senjata (H)',
   'backpack.inHand': ' — di tangan',
   'backpack.noAmmo': 'Damage {damage} · tanpa amunisi',
   'backpack.ammo': 'Damage {damage} · Mag {mag}/{magSize} · Cadangan {ammo} peluru',
@@ -273,6 +278,7 @@ addStrings('id', {
   'settings.controls.pickpocket': 'Copet',
   'settings.controls.park': 'Parkir mobil (safe house)',
   'settings.controls.backpack': 'Tas',
+  'settings.controls.holster': 'Simpan / pegang senjata',
   'settings.controls.map': 'Peta',
   'settings.controls.pause': 'Jeda',
   'settings.controls.mute': 'Bisukan / bunyikan',
@@ -373,6 +379,8 @@ export function createUI(handlers) {
   bind('btnCloseWardrobe', () => handlers.onWardrobeClose());
   bind('btnCloseGarage', () => handlers.onGarageClose());
   bind('btnCloseBackpack', () => handlers.onBackpackClose());
+  // v6: the panel's Holster / Draw button (main.js onBackpackHolster).
+  bind('btnHolsterBackpack', () => handlers.onBackpackHolster && handlers.onBackpackHolster());
   bind('btnCloseSettings', () => handlers.onCloseSettings && handlers.onCloseSettings());
 
   // Re-render the open Settings panel when the language changes.
@@ -728,10 +736,14 @@ export function createUI(handlers) {
      * unowned rows show the shop price instead, so the bag doubles as a
      * shopping list. `capacity` is the slot count (6).
      */
-    showBackpack(items, capacity) {
+    showBackpack(items, capacity, holstered) {
       const owned = items.filter((i) => i.owned).length;
       $('backpackTitle').textContent = t('backpack.title', { owned, capacity });
       $('backpackHint').textContent = t('backpack.hint');
+      // v6: the Holster / Draw button — same toggle as the H key, and the
+      // only way to holster on touch (no keyboard there).
+      const holsterBtn = $('btnHolsterBackpack');
+      if (holsterBtn) holsterBtn.textContent = holstered ? t('backpack.draw') : t('backpack.holster');
       const list = $('backpackItems');
       list.innerHTML = '';
       items.forEach((item, i) => {

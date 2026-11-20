@@ -3,8 +3,11 @@
 import { addStrings } from './i18n.js';
 export const TILE = 32;
 // v3: ~3x the v2 area (4800x3600 = 17.28M -> 9600x5400 = 51.84M units^2).
-export const WORLD_WIDTH = 9600;
-export const WORLD_HEIGHT = 5400;
+// v6: shrunk to the dense core — 2400x1800 = 4.32M units^2 (x/4, y/3).
+// Same metre scale, same road widths, same districts; only the map is
+// smaller, so every building renders and the phone holds its frame rate.
+export const WORLD_WIDTH = 2400;
+export const WORLD_HEIGHT = 1800;
 
 // Districts, west to east and south to north. District 0 is open at the start;
 // district 1 (beach) opens after main mission 20, district 2 (mountains) after 40.
@@ -14,22 +17,22 @@ export const DISTRICTS = [
   { id: 2, name: 'Cinder Peaks', short: 'Peaks', color: '#5b6b7a', locked: true },
 ];
 export const DISTRICT_RECTS = [
-  { x: 0, y: 1350, w: 6000, h: 4050 }, // city: south-west block
-  { x: 6000, y: 1350, w: 3600, h: 4050 }, // beach: east strip
-  { x: 0, y: 0, w: 9600, h: 1350 }, // mountains: north band
+  { x: 0, y: 450, w: 1500, h: 1350 }, // city: south-west block
+  { x: 1500, y: 450, w: 900, h: 1350 }, // beach: east strip
+  { x: 0, y: 0, w: 2400, h: 450 }, // mountains: north band
 ];
 // Open water runs along the far east edge and a lake sits in the peaks.
 export const WATER_RECTS = [
-  { x: 9200, y: 1350, w: 400, h: 4050 },
-  { x: 6600, y: 90, w: 1400, h: 480 },
+  { x: 2300, y: 450, w: 100, h: 1350 },
+  { x: 1650, y: 30, w: 350, h: 160 },
 ];
 // Airport, south-east downtown (moved from the v2 spot for the bigger map).
-export const AIRPORT = { x: 3900, y: 4300, w: 1700, h: 900, runway: { x: 4050, y: 4650, w: 1200, h: 120 } };
-// Safe house: KEPT at its v2 spot on purpose. player.js checks the door at
-// the literal (495, 1610) and shops.js sleeps/garages the car at (560, 1620);
-// both files are outside this build's scope, so moving the house would break
-// entering it. It still sits in downtown, a short walk from the start.
-export const SAFE_HOUSE = { x: 420, y: 1500, w: 150, h: 110, door: { x: 495, y: 1610 } };
+export const AIRPORT = { x: 975, y: 1433.3, w: 425, h: 300, runway: { x: 1012.5, y: 1550, w: 300, h: 40 } };
+// Safe house: the v6 scaled spot (x/4, y/3 of the v5 lot). player.js
+// checks the door at SAFE_HOUSE.door and shops.js sleeps/garages the car
+// at (140, 540); both stay in sync with this lot. It still sits in
+// downtown, a short walk from the old start area.
+export const SAFE_HOUSE = { x: 105, y: 500, w: 37.5, h: 36.7, door: { x: 123.8, y: 536.7 } };
 
 export const STEP = 1 / 60;
 export const SAVE_KEY = 'neon-bay-save-v1';
@@ -158,7 +161,10 @@ export const CHARACTER_HEIGHT = 1.8;
 export const DENSITY_LEVELS = {
   low: { label: 'Low', peds: [40, 15, 8], traffic: [12, 5, 4], parked: [8, 3, 1] },
   medium: { label: 'Medium', peds: [60, 22, 14], traffic: [18, 7, 5], parked: [12, 3, 1] },
-  high: { label: 'High', peds: [85, 32, 23], traffic: [24, 10, 8], parked: [16, 4, 2] },
+  // v6: downtown traffic/parked raised (24->28, 16->20) — the map is
+  // 1/16 the v5 area, so the same counts would already feel denser;
+  // the extra cars make the streets read as busy, not just full.
+  high: { label: 'High', peds: [85, 32, 23], traffic: [28, 10, 8], parked: [20, 4, 2] },
 };
 export const DEFAULT_DENSITY = 'high';
 
@@ -173,6 +179,10 @@ export const DEFAULT_DENSITY = 'high';
 // farthest ambient peds / traffic / parked cars back into a band around
 // the hero, same district first. The player always sees a busy street;
 // the city never renders hundreds at once.
+// v6: the close bands are bigger (initialClose parked 2->6, traffic 2->5;
+// close targets peds 4->6, traffic 2->5) and tighter (parked 30-80 m,
+// traffic 40-110 m), so New Game opens on >=10 vehicles within 100 m
+// of the spawn — the v5 spawn measured only 5.
 // Radii are metres. Spawn bands start outside the hero's immediate view
 // (no pop-in on screen) and inside the near radius. Targets are per
 // district [downtown, beach, peaks]: downtown is the busiest, the peaks
@@ -191,7 +201,7 @@ export const AMBIENT_CROWD = {
   // How many peds / moving cars / parked cars should be near the hero,
   // per district [downtown, beach, peaks].
   targets: [
-    { peds: 14, traffic: 9, parked: 4 },
+    { peds: 14, traffic: 12, parked: 8 },
     { peds: 9, traffic: 6, parked: 3 },
     { peds: 6, traffic: 4, parked: 2 },
   ],
@@ -199,31 +209,31 @@ export const AMBIENT_CROWD = {
   maxPerTick: { peds: 4, traffic: 3, parked: 2 },
   // How many of the downtown quota are born near the hero at New Game
   // (the rest scatter city-wide as in v4). The hero starts downtown.
-  initialNear: { peds: 12, traffic: 6, parked: 4 },
+  initialNear: { peds: 12, traffic: 10, parked: 8 },
   // Of the initial-near quota, this many are born in the CLOSE band below
   // — on the very street the hero starts on, so the first thing the
   // player sees is people walking and cars passing, not an empty road.
   // The close band is ALSO topped up by the balancer (below), but only
   // while the near field is nearly empty and only at the FAR side of the
   // band, so nothing pops into view in the middle of a busy street.
-  initialClose: { peds: 5, traffic: 2, parked: 2 },
+  initialClose: { peds: 5, traffic: 5, parked: 6 },
   pedCloseMin: 25,
   pedCloseMax: 110,
-  trafficCloseMin: 45,
-  trafficCloseMax: 140,
+  trafficCloseMin: 40,
+  trafficCloseMax: 110,
   parkedCloseMin: 30,
-  parkedCloseMax: 90,
+  parkedCloseMax: 80,
   // Balancer close top-up: keep at least this many peds within 120 m and
   // cars within 150 m of the hero, recycling at most 1 of each per tick
   // into the far side of the close band (peds 45-95 m, cars 90-140 m).
   // Pedestrians are small so their band starts closer; cars are big, so
   // theirs stays near the edge of view and drives in within seconds.
   pedCloseRadius: 120,
-  pedCloseTarget: 4,
+  pedCloseTarget: 6,
   pedCloseSpawnMin: 45,
   pedCloseSpawnMax: 95,
   trafficCloseRadius: 150,
-  trafficCloseTarget: 2,
+  trafficCloseTarget: 5,
   trafficCloseSpawnMin: 90,
   trafficCloseSpawnMax: 140,
   // Minimum gap between a recycled traffic car and any other traffic car.
@@ -236,7 +246,8 @@ export const AMBIENT_CROWD = {
 // and frustumCulled = true — the renderer then only draws the sectors
 // near the camera instead of the whole city's dashes (~120k tris) and
 // traffic-light lamps (~175k tris) every frame. The same grid idea the
-// trees use (world.js), just finer: 4 x 3 sectors of 2400 x 1800 m.
+// trees use (world.js), just finer: 4 x 3 sectors of 600 x 600 m
+// on the v6 map (was 2400 x 1800 on the v5 map).
 // DRAW_FAR_METRES: pedestrians and vehicles farther than this from the
 // camera focus (+ the camera's follow distance) are not drawn at all
 // that frame — the mesh pool drops them, and they are rebuilt when they

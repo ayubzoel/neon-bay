@@ -9,15 +9,16 @@
 //   metres: house 3 / 6.5 m, shophouse 9 m, mid-rise 15-25 m, tower
 //   40-63 m, door 2.1 m, window ~1.2 m (facade tile 9.6 x 19.2 m in
 //   textures.js), tree 4-8 m, palm 10-15 m, lamp 6 m, wall 3 m.
-// * The map stays 9600x5400 (9.6 x 5.4 km) and the road CENTRELINES stay
-//   where v3 put them, so missions, shops, barriers, GPS and the road graph
-//   keep working. What changes is the DENSITY: Builder B's roadgraph
-//   (prepareRoads) narrows every road to 7 m residential (16 m arterial
-//   ring), densifies the grid to ~150 m blocks, and adds the square ring
-//   road — buildWorld enumerates its cells from the FINAL road list (after
-//   buildRoadGraph mutates it), so buildings fill the real blocks, never
-//   the v3 grid. Building faces sit 6 m from a residential centreline and
-//   10.5 m from an arterial one (road half + 2.5 m sidewalk).
+// * The map is 2400x1800 (v6: x/4, y/3 of the v5 9600x5400) and the
+//   road CENTRELINES are the v5 ones scaled, so missions, shops,
+//   barriers, GPS and the road graph keep working. What changes is the
+//   DENSITY: Builder B's roadgraph narrows every road to 7 m residential
+//   (16 m arterial ring), densifies the grid to ~150 m blocks, and adds
+//   the square ring road — buildWorld enumerates its cells from the FINAL
+//   road list (after buildRoadGraph mutates it), so buildings fill the
+//   real blocks, never the v3 grid. Building faces sit 6 m from a
+//   residential centreline and 10.5 m from an arterial one (road half +
+//   2.5 m sidewalk).
 // * Mountains are a backdrop range NORTH of the map edge (centres
 //   y <= -600, bases clear of every road) — real 500-800 m peaks, hazy in
 //   the fog, never pyramids looming over downtown (see data.js).
@@ -56,21 +57,23 @@ addStrings('id', {
   'gate.ring.peaks': 'Gerbang Ring Road',
 });
 
-// v3 street layout: 10 avenues, 9 cross streets downtown; 4 shore avenues
-// and 6 shore roads at the beach; 2 mountain roads and 4 climbs in the peaks.
-// (Roadgraph densifies these to ~150 m blocks and adds the ring road.)
-export const AVENUES = [300, 900, 1500, 2100, 2700, 3300, 3900, 4500, 5100, 5700];
-export const STREETS = [1700, 2150, 2600, 3050, 3500, 3950, 4400, 4850, 5250];
-export const BEACH_AVENUES = [6400, 7200, 8000, 8800];
-export const BEACH_ROADS = [2000, 2600, 3000, 4000, 4400, 5000];
-export const PEAK_ROADS = [450, 900];
-export const PEAK_CLIMBS = [1500, 3600, 4500, 8400];
-// Through-roads with a gate: downtown streets 2600/4400 reach the beach,
-// downtown avenues 1500/4500 climb into the peaks.
-export const BEACH_GATE_YS = [2600, 4400];
-export const PEAK_GATE_XS = [1500, 4500];
-export const PEAK_BOUNDARY_Y = 1350;
-export const BEACH_BOUNDARY_X = 6000;
+// v6: the map is 2400x1800 (x/4, y/3 of v5) — same metre scale, same
+// road widths, same districts, only the city is smaller and denser.
+// Every centreline below is the v5 value scaled: avenues x/4, streets
+// y/3, so missions, shops, barriers, GPS and the road graph keep
+// working on the small map.
+export const AVENUES = [75, 225, 375, 525, 675, 825, 975, 1125, 1275, 1425];
+export const STREETS = [566.7, 716.7, 866.7, 1016.7, 1166.7, 1316.7, 1466.7, 1616.7, 1750];
+export const BEACH_AVENUES = [1600, 1800, 2000, 2200];
+export const BEACH_ROADS = [666.7, 866.7, 1000, 1333.3, 1466.7, 1666.7];
+export const PEAK_ROADS = [150, 300];
+export const PEAK_CLIMBS = [375, 900, 1125, 2100];
+// Through-roads with a gate: downtown streets 866.7/1466.7 reach the beach,
+// downtown avenues 375/1125 climb into the peaks.
+export const BEACH_GATE_YS = [866.7, 1466.7];
+export const PEAK_GATE_XS = [375, 1125];
+export const PEAK_BOUNDARY_Y = 450;
+export const BEACH_BOUNDARY_X = 1500;
 
 // --- Realistic scale: 1 unit = 1 metre, Leo = 1.8 m. -------------------
 export const LEO_HEIGHT_UNITS = 1.8;
@@ -557,9 +560,9 @@ function buildMeshes(data) {
   // Map sectors (3 columns x 2 rows), shared by the trees below and
   // the buildings: every instanced group is split per sector and
   // frustum-culled, so the renderer only draws the sectors near the
-  // camera instead of the whole 9.6 x 5.4 km map at once (the building
+  // camera instead of the whole 2.4 x 1.8 km map at once (the building
   // groups used to be one whole-map mesh with frustumCulled=false,
-  // ~180k tris always rendered). A sector's bounding sphere is ~2 km,
+  // ~180k tris always rendered). A sector's bounding sphere is ~600 m,
   // so the sectors behind the camera are culled; the ones ahead render.
   const SECTOR_COLS = 3;
   const SECTOR_ROWS = 2;
@@ -887,8 +890,8 @@ function buildMeshes(data) {
   // Peaks forest: rolling ground, well off every road and building.
   let placed = 0;
   for (let i = 0; i < 220 && placed < 26; i += 1) {
-    const mx = 120 + hash01(i, 7) * 9360;
-    const my = 90 + hash01(i, 21) * 1180;
+    const mx = 30 + hash01(i, 7) * 2340;
+    const my = 30 + hash01(i, 21) * 393.3;
     const mr = 30 + hash01(i, 33) * 40;
     if (!clearForMound(mx, my, mr, 6)) continue;
     grassMounds.push({ x: mx, y: 0, z: my, sx: mr, sy: 1.0 + hash01(i, 55) * 0.8, sz: mr * (0.8 + hash01(i, 77) * 0.4) });
@@ -899,8 +902,8 @@ function buildMeshes(data) {
   // shore avenue and clear of the ring road and the palms.
   placed = 0;
   for (let i = 0; i < 120 && placed < 12; i += 1) {
-    const mx = 8900 + hash01(i, 91) * 240;
-    const my = 1500 + hash01(i, 101) * 3700;
+    const mx = 2225 + hash01(i, 91) * 60;
+    const my = 500 + hash01(i, 101) * 1233.3;
     const mr = 10 + hash01(i, 113) * 12;
     if (!clearForMound(mx, my, mr, 4)) continue;
     sandMounds.push({ x: mx, y: 0, z: my, sx: mr, sy: 0.6 + hash01(i, 127) * 0.4, sz: mr });
@@ -925,8 +928,8 @@ function buildMeshes(data) {
   const dirtQuads = [];
   placed = 0;
   for (let i = 0; i < 400 && placed < 120; i += 1) {
-    const dx = 120 + hash01(i, 141) * 9360;
-    const dy = 90 + hash01(i, 153) * 1180;
+    const dx = 30 + hash01(i, 141) * 2340;
+    const dy = 30 + hash01(i, 153) * 393.3;
     const dw = 6 + hash01(i, 167) * 10;
     const dh = 5 + hash01(i, 179) * 8;
     if (!clearOfRoads(dx, dy, Math.max(dw, dh) / 2, 2)) continue;
@@ -1106,10 +1109,10 @@ function buildMeshes(data) {
     // land in the sea, the peaks lake, the airport, or past the world edge.
     const lampSpots = graph.nodes.filter((n) => {
       if (!n.crossing || n.level !== 0) return false;
-      const off = (n.x <= 90 || n.x >= 9160 || n.y <= 90 || n.y >= 5310) ? 10.5 : 5.5;
+      const off = (n.x <= 22.5 || n.x >= 2290 || n.y <= 30 || n.y >= 1770) ? 10.5 : 5.5;
       const lx = n.x + off;
       const ly = n.y + off;
-      return lx > 30 && lx < 9180 && ly > 30 && ly < 5360
+      return lx > 7.5 && lx < 2295 && ly > 10 && ly < 1790
         && !isWater(lx, ly)
         && !(lx > AIRPORT.x - 10 && lx < AIRPORT.x + AIRPORT.w + 10 && ly > AIRPORT.y - 10 && ly < AIRPORT.y + AIRPORT.h + 10);
     });
@@ -1122,7 +1125,7 @@ function buildMeshes(data) {
     headGeo.translate(0, 6.05, 0);
     const heads = new THREE.InstancedMesh(headGeo, nightLightMat('lamp-head', 0xfde68a, 0.15, 1.8), lampSpots.length);
     lampSpots.forEach((n, i) => {
-      const off = (n.x <= 90 || n.x >= 9160 || n.y <= 90 || n.y >= 5310) ? 10.5 : 5.5;
+      const off = (n.x <= 22.5 || n.x >= 2290 || n.y <= 30 || n.y >= 1770) ? 10.5 : 5.5;
       lampDummy.position.set(n.x + off, 0, n.y + off);
       lampDummy.rotation.set(0, 0, 0);
       lampDummy.scale.set(1, 1, 1);
@@ -1212,7 +1215,7 @@ export function buildWorld(rng) {
   // The wall runs the whole length of each district border; the only gaps
   // are the gate openings on the through-roads — plus the three ring-road
   // crossings (Builder B's roadgraph routes the ring through the walls at
-  // (80,1350), (9170,1350) and (6000,5320), so the walls need matching
+  // (20,450), (2292.5,450) and (1500,1773.3), so the walls need matching
   // gaps there or the player can never drive the ring after unlocking).
   // Wall pieces are solids, gates are separate so they can open when the
   // district unlocks. Walls are 1 m thick, 3 m tall; gates are 12 m wide.
@@ -1242,11 +1245,11 @@ export function buildWorld(rng) {
       ? { x: cur, y: fixed - 0.5, w: to - cur, h: 1, district }
       : { x: fixed - 0.5, y: cur, w: 1, h: to - cur, district });
   }
-  // Beach wall: x = 6000, y 1350..5400, gaps at the two through streets
+  // Beach wall: x = 1500, y 450..1800, gaps at the two through streets
   // and the ring-road south crossing.
   wallRun(1, false, BEACH_BOUNDARY_X, PEAK_BOUNDARY_Y, WORLD_HEIGHT,
     [...BEACH_GATE_YS.map((gy) => [gy - 6, gy + 6]), [RING.south - 6, RING.south + 6]]);
-  // Peaks wall: y = 1350, x 0..9600, gaps at the two through avenues and
+  // Peaks wall: y = 450, x 0..2400, gaps at the two through avenues and
   // the two ring-road crossings.
   wallRun(2, true, PEAK_BOUNDARY_Y, 0, WORLD_WIDTH,
     [...PEAK_GATE_XS.map((gx) => [gx - 6, gx + 6]), [RING.west - 6, RING.west + 6], [RING.east - 6, RING.east + 6]]);
@@ -1265,13 +1268,13 @@ export function buildWorld(rng) {
   }
   for (const x of AVENUES) vRoad(x, PEAK_BOUNDARY_Y, WORLD_HEIGHT);
   for (const y of STREETS) hRoad(y, 0, BEACH_BOUNDARY_X);
-  // Beach: shore avenues + shore roads (through-roads 2600/4400 continue).
+  // Beach: shore avenues + shore roads (through-roads 866.7/1466.7 continue).
   for (const x of BEACH_AVENUES) vRoad(x, PEAK_BOUNDARY_Y, WORLD_HEIGHT);
-  for (const y of BEACH_ROADS) hRoad(y, BEACH_BOUNDARY_X, 9200);
-  // Peaks: two mountain roads; the y=450 road is split around the lake.
-  hRoad(450, 0, 6500);
-  hRoad(450, 8100, WORLD_WIDTH);
-  hRoad(900, 0, WORLD_WIDTH);
+  for (const y of BEACH_ROADS) hRoad(y, BEACH_BOUNDARY_X, RING.east);
+  // Peaks: two mountain roads; the y=150 road is split around the lake.
+  hRoad(150, 0, 1625);
+  hRoad(150, 2025, WORLD_WIDTH);
+  hRoad(300, 0, WORLD_WIDTH);
   for (const x of PEAK_CLIMBS) vRoad(x, 0, PEAK_BOUNDARY_Y);
 
   // The road graph: intersections, lanes, sidewalks, zebra crossings.
@@ -1422,7 +1425,7 @@ export function buildWorld(rng) {
         if (rng.next() > density) continue;
         counter.total += 1;
         // Pocket park: ~3% of cells, never in the tower core.
-        const inTowerCore = district === 0 && cx >= 2700 && cx <= 4500 && cy >= 2600 && cy <= 4400;
+        const inTowerCore = district === 0 && cx >= 675 && cx <= 1125 && cy >= 866.7 && cy <= 1466.7;
         if (parkChance > 0 && !inTowerCore && rng.chance(parkChance)) {
           parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
           const n = 6 + Math.floor(rng.next() * 5);
@@ -1590,7 +1593,7 @@ export function buildWorld(rng) {
   // Peaks pines: many, kept off the lake and the roads.
   for (let i = 0; i < 260; i += 1) {
     const t = {
-      x: rng.range(80, 9500), y: rng.range(60, 1300), kind: 'pine',
+      x: rng.range(20, 2375), y: rng.range(20, 433.3), kind: 'pine',
       h: 4 + rng.range(0, 4), r: 2 + rng.range(0, 2),
     };
     if (rectsOverlap({ x: t.x - 2, y: t.y - 2, w: 4, h: 4 },
@@ -1601,7 +1604,7 @@ export function buildWorld(rng) {
 
   // The safe house is a solid building (14 x 11 m at the door side of the
   // lot — the lot itself stays walkable so Leo can reach the door).
-  const safeHouseB = { x: 488, y: 1599, w: 14, h: 11 };
+  const safeHouseB = { x: 116.8, y: 525.7, w: 14, h: 11 };
   const safeHouse = {
     x: safeHouseB.x, y: safeHouseB.y, w: safeHouseB.w, h: safeHouseB.h,
     color: '#7c3aed', district: 0, tall: false, kind: 'house', height: 6,
@@ -1664,10 +1667,10 @@ export function buildWorld(rng) {
     }
   }
   // Coconut rows along the shore: palms lining the sand strip between the
-  // ring road (x 9170) and the sea (x 9200), so the beach reads as a
+  // ring road (x 2292.5) and the sea (x 2300), so the beach reads as a
   // palm-lined resort strip.
-  for (let y = 1500; y <= 5300; y += 130) {
-    trees.push({ x: 9185 + rng.range(-2, 2), y, kind: 'palm', h: 10 + rng.range(0, 5), r: 2.5 + rng.range(0, 1.5) });
+  for (let y = 500; y <= 1766.7; y += 43.3) {
+    trees.push({ x: 2296.3 + rng.range(-2, 2), y, kind: 'palm', h: 10 + rng.range(0, 5), r: 2.5 + rng.range(0, 1.5) });
   }
 
   // Shops: the interact point stays where data.js put it; the building
@@ -1711,11 +1714,11 @@ export function buildWorld(rng) {
     for (const k of keepOuts) if (Math.hypot(k.x - cx, k.y - cy) < r + k.r + 4) return false;
     return true;
   }
-  // Candidate spots: a row along the north verge (y ~15-40) every 550 m,
-  // and a column along the west verge (x ~15-40) every 650 m, jittered.
+  // Candidate spots: a row along the north verge (y ~5-13) every 137.5 m,
+  // and a column along the west verge (x ~4-10) every 216.7 m, jittered.
   const foothillSpots = [];
-  for (let x = 300; x <= 9400; x += 550) foothillSpots.push([x + rng.range(-120, 120), 15 + rng.range(0, 25)]);
-  for (let y = 1700; y <= 5200; y += 650) foothillSpots.push([15 + rng.range(0, 25), y + rng.range(-120, 120)]);
+  for (let x = 75; x <= 2350; x += 137.5) foothillSpots.push([x + rng.range(-30, 30), 5 + rng.range(0, 8.3)]);
+  for (let y = 566.7; y <= 1733.3; y += 216.7) foothillSpots.push([3.8 + rng.range(0, 6.3), y + rng.range(-40, 40)]);
   for (const [fx, fy] of foothillSpots) {
     const fr = 22 + rng.range(0, 14);
     const fh = 12 + rng.range(0, 18);

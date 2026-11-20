@@ -43,7 +43,7 @@ function placeHeroOnFoot(state, x, y, angle) {
  * Park traffic on the avenue ahead of the hero, so the play shot shows a
  * busy street. Cars are 4.5 m long (vehicles.js, v4.1 meter scale), so
  * they are staged 30–120 m up the road in the arterial lane centres
- * (x 1494 / 1506): close enough to read as traffic next to the 1.8 m
+ * (x 373.5 / 376.5): close enough to read as traffic next to the 1.8 m
  * hero, far enough not to hide him. (Tester fix: the old staging put
  * them 150–480 m away on a stale "46 u car" note, and the shot showed
  * an empty road.)
@@ -70,8 +70,8 @@ function placeTraffic(state, positions) {
 function moveNpcsAway(state, x, y, minDist) {
   for (const n of state.npcs) {
     if (Math.hypot(n.x - x, n.y - y) < minDist) {
-      n.x += 3000;
-      n.y += 2000;
+      n.x += 750;
+      n.y += 666.7;
     }
   }
 }
@@ -92,12 +92,12 @@ export function stageShot(name, state, world) {
     state.time.day = 1;
     state.season = 'summer';
     state.rain = 0;
-    state.camera.x = 1500;
-    state.camera.y = 2100;
+    state.camera.x = 375;
+    state.camera.y = 700;
     // Wide panorama over downtown.
     state.camera.yaw = 0.6;
     state.camera.pitch = 0.5;
-    state.camera.dist = 900;
+    state.camera.dist = 300;
     state.money = 1250;
     return { screen: SCREEN_TITLE };
   }
@@ -109,20 +109,20 @@ export function stageShot(name, state, world) {
     state.money = 1250;
     state.wanted = 0;
     startMainMission(state, 0);
-    // v4: Leo on foot, mid-avenue 1500, heading north (-π/2) up the
+    // v4: Leo on foot, mid-avenue 375, heading north (-π/2) up the
     // street; the camera sits behind him (yaw π looks north) at 9.5 m,
     // so the 1.8 m hero fills ~1/5 of the frame with the towers of
     // downtown rising behind him and traffic ahead on the avenue.
-    placeHeroOnFoot(state, 1500, 1900, -Math.PI / 2);
+    placeHeroOnFoot(state, 375, 633.3, -Math.PI / 2);
     placeTraffic(state, [
-      [1494, 1870, -Math.PI / 2],
-      [1506, 1840, -Math.PI / 2],
-      [1494, 1810, -Math.PI / 2],
-      [1506, 1780, -Math.PI / 2],
+      [373.5, 623.3, -Math.PI / 2],
+      [376.5, 613.3, -Math.PI / 2],
+      [373.5, 603.3, -Math.PI / 2],
+      [376.5, 593.3, -Math.PI / 2],
     ]);
-    moveNpcsAway(state, 1500, 1900, 4);
-    state.camera.x = 1500;
-    state.camera.y = 1900;
+    moveNpcsAway(state, 375, 633.3, 4);
+    state.camera.x = 375;
+    state.camera.y = 633.3;
     state.camera.yaw = Math.PI;
     state.camera.pitch = 0.45;
     state.camera.dist = 9.5;
@@ -136,20 +136,20 @@ export function stageShot(name, state, world) {
     state.money = 3400;
     state.wanted = 3;
     startMainMission(state, 4);
-    placeHeroInCar(state, 1500, 1900, -Math.PI / 2);
+    placeHeroInCar(state, 375, 633.3, -Math.PI / 2);
     // Police around the car (north, up the avenue, and closing in from
     // behind) so the chase is visible in the frame — the camera sits
     // close behind the hero looking north. (Tester fix: the old camera
     // sat 300 m away, so the chase read as a speck on an empty plain.)
     placePolice(state, [
-      ['car', 1494, 1872],
-      ['car', 1506, 1858],
-      ['bike', 1494, 1845],
-      ['bike', 1506, 1878],
-      ['car', 1500, 1832],
+      ['car', 373.5, 624],
+      ['car', 376.5, 619.3],
+      ['bike', 373.5, 615],
+      ['bike', 376.5, 626],
+      ['car', 375, 610.7],
     ]);
-    state.camera.x = 1500;
-    state.camera.y = 1900;
+    state.camera.x = 375;
+    state.camera.y = 633.3;
     state.camera.yaw = Math.PI;
     state.camera.pitch = 0.32;
     state.camera.dist = 32;
@@ -165,22 +165,22 @@ export function stageShot(name, state, world) {
     state.unlocked[1] = true;
     const hero = state.hero;
     const bike = state.vehicles.find((v) => v.kind === 'bike') || state.vehicles[0];
-    // On avenue 3900 at street 1700 (a real road), heading north (-Y).
-    bike.x = 3900;
-    bike.y = 1700;
+    // On avenue 975 at street 566.7 (a real road), heading north (-Y).
+    bike.x = 975;
+    bike.y = 566.7;
     bike.angle = -Math.PI / 2;
     bike.speed = 0;
     state.playerVehicle = bike;
-    hero.x = 3900;
-    hero.y = 1700;
-    state.camera.x = 3900;
-    state.camera.y = 1700;
+    hero.x = 975;
+    hero.y = 566.7;
+    state.camera.x = 975;
+    state.camera.y = 566.7;
     // Behind the bike, looking north up the avenue: the patrol car ahead
     // is visible up the road, under the street lamps.
     state.camera.yaw = Math.PI;
     state.camera.pitch = 0.4;
     state.camera.dist = 320;
-    placePolice(state, [['car', 3900, 1450]]);
+    placePolice(state, [['car', 975, 483.3]]);
     state.objective = 'Side job: Deliver the package to Pier 9 before dawn.';
     return { screen: SCREEN_PLAY };
   }
@@ -192,11 +192,11 @@ export function stageShot(name, state, world) {
     state.money = 1250;
     state.wanted = 0;
     startMainMission(state, 0);
-    // Heading north up avenue 1500, same staging as the play shot, so the
+    // Heading north up avenue 375, same staging as the play shot, so the
     // frozen 3D scene behind the map is the real game.
-    placeHeroInCar(state, 1500, 1900, -Math.PI / 2);
-    state.camera.x = 1500;
-    state.camera.y = 1900;
+    placeHeroInCar(state, 375, 633.3, -Math.PI / 2);
+    state.camera.x = 375;
+    state.camera.y = 633.3;
     state.camera.yaw = Math.PI;
     state.camera.pitch = 0.45;
     state.camera.dist = 260;
@@ -204,8 +204,8 @@ export function stageShot(name, state, world) {
     // with its symbols and legend. main.js opens the map panel for this shot.
     // v4: the panel now also shows the 10 new landmarks (3 worship, 3
     // housing, 4 ring-road flyovers) in the legend and the Landmarks list,
-    // and fitView frames the whole 9600 x 5400 m city — the big-map proof.
-    setDestination(state, world, { id: 'airport', kind: 'airport', label: 'Airport — Cargo Terminal', x: 4650, y: 4710 });
+    // and fitView frames the whole 2400 x 1800 m city — the big-map proof.
+    setDestination(state, world, { id: 'airport', kind: 'airport', label: 'Airport — Cargo Terminal', x: 1162.5, y: 1570 });
     state.showMap = true;
     return { screen: SCREEN_PLAY };
   }

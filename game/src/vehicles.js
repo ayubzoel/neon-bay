@@ -157,15 +157,15 @@ export function spawnVehicles(state, world, rng) {
       }
     }
   }
-  // Boats in the open water along the east edge (x 9200-9600).
+  // Boats in the open water along the east edge (x 2320-2375).
   for (let i = 0; i < 3; i += 1) {
-    list.push(makeVehicle('boat', 9280 + rng.range(0, 220), rng.range(1600, 5000), rng.range(0, Math.PI * 2), 'parked'));
+    list.push(makeVehicle('boat', 2320 + rng.range(0, 55), rng.range(533.3, 1666.7), rng.range(0, Math.PI * 2), 'parked'));
   }
-  // Two planes on the new runway (x 4050-5250, y 4650-4770).
-  list.push(makeVehicle('plane', 4550, 4710, 0, 'parked'));
-  list.push(makeVehicle('plane', 4800, 4710, 0, 'parked'));
+  // Two planes on the new runway (x 1012.5-1312.5, y 1550-1590).
+  list.push(makeVehicle('plane', 1137.5, 1570, 0, 'parked'));
+  list.push(makeVehicle('plane', 1200, 1570, 0, 'parked'));
   // The player's starter car, parked by the safe house.
-  const starter = makeVehicle('car', 620, 1620, 0, 'player');
+  const starter = makeVehicle('car', 155, 540, 0, 'player');
   starter.color = '#22d3ee';
   starter.name = 'Neon Comet';
   list.push(starter);

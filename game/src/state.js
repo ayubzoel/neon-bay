@@ -103,13 +103,19 @@ export function createGameState(seed) {
     season: 'summer',
     rain: 0,
     money: PLAYER_START_MONEY,
-    // v5 spawn: Leo starts ON street 1700 (x 495, the road by the safe
-    // house) — the v4 default (700, 1750) was inside a building solid.
-    // validateHeroSpawn() (player.js) still re-checks this at New Game /
-    // Continue / respawn, so a future map change can never strand him.
-    hero: makeHero(495, 1700),
+    // v6 spawn: Leo starts ON the avenue 675 / street 866.7 intersection
+    // (north-west corner of the downtown tower core) — buildings, trees
+    // and traffic in every direction, and the Neon Diner (mission 1) is
+    // one block west. validateHeroSpawn() (player.js) still re-checks
+    // this at New Game / Continue / respawn, so a future map change can
+    // never strand him.
+    hero: makeHero(675, 866.7),
     weapons,
     weapon: 'pistol',
+    // v6: holstered — false means the active weapon is in Leo's right
+    // hand, true means it is stowed on his back and his hands are empty.
+    // H toggles it; picking a weapon (backpack / digits / wheel) draws it.
+    holstered: false,
     // v4 backpack: six slots (one per weapon kind), all of v3's weapons fit.
     // state.weapons IS the backpack's contents; this records its capacity
     // and whether the panel is open, so saves stay explicit about it.
@@ -141,7 +147,7 @@ export function createGameState(seed) {
     message: '',
     messageTimer: 0,
     objective: t('msg.objectiveStart'),
-    camera: { x: 495, y: 1700, yaw: 0, pitch: CAMERA_PITCH_DEFAULT, dist: CAMERA_DIST_DEFAULT },
+    camera: { x: 675, y: 866.7, yaw: 0, pitch: CAMERA_PITCH_DEFAULT, dist: CAMERA_DIST_DEFAULT },
     muted: false,
     elapsed: 0,
   };
@@ -246,6 +252,7 @@ function serializable(state) {
     hero: { x: state.hero.x, y: state.hero.y, hp: state.hero.hp, armor: state.hero.armor, outfit: state.hero.outfit },
     weapons: state.weapons,
     weapon: state.weapon,
+    holstered: state.holstered,
     backpack: state.backpack || { capacity: 6 },
     missions: { mainIndex: state.missions.mainIndex, completedMain: state.missions.completedMain, sideDone: state.missions.sideDone },
     unlocked: state.unlocked,
@@ -457,6 +464,8 @@ export function applySaveData(state, data) {
     state.weapons = clean;
   }
   if (data.weapon) state.weapon = data.weapon;
+  // v6: a save that predates holstering simply stays drawn (false).
+  if (typeof data.holstered === 'boolean') state.holstered = data.holstered;
   if (data.backpack && Number.isFinite(data.backpack.capacity)) {
     state.backpack = { capacity: Math.max(1, Math.min(6, Math.floor(data.backpack.capacity))) };
   }

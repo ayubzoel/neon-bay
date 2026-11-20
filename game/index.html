@@ -33,6 +33,12 @@
   .keys b { color: #e2e8f0; }
   #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(20, 25, 38, 0.92); color: #fde68a; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 18px; font-weight: 700; z-index: 15; pointer-events: none; opacity: 0; transition: opacity 0.2s; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
+  /* HUD map button: bottom of the top-right column. v6: it never had a
+     position rule of its own (the media query below only sets top/bottom/
+     right), so it rendered static at the top-left, buried behind the
+     money panel — on every viewport. */
+  #btnMap { position: fixed; right: 14px; top: 392px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #e2e8f0; background: rgba(20,25,38,0.88); border: 1px solid #64748b; border-radius: 10px; cursor: pointer; }
+  #btnMap:hover { background: rgba(100,116,139,0.4); }
   /* HUD backpack button: under the map button, top-right. */
   #btnBackpack { position: fixed; right: 14px; top: 218px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #fde68a; background: rgba(20,25,38,0.88); border: 1px solid #f59e0b; border-radius: 10px; cursor: pointer; }
   #btnBackpack:hover { background: rgba(245,158,11,0.35); }
@@ -95,10 +101,20 @@
     #mapWrap { flex: 1 1 55%; }
     #mapSide { width: 100%; flex: 0 0 auto; max-height: 38%; }
     #mapHead h2 { font-size: 17px; }
-    #btnMap { top: auto; bottom: 210px; right: 12px; }
-    #btnBackpack { top: auto; bottom: 268px; right: 12px; }
-    #btnMute { top: auto; bottom: 326px; right: 12px; }
-    #btnSettingsHud { top: auto; bottom: 384px; right: 12px; }
+    /* v6 mobile HUD column: starts above the touch cluster (the E button
+       tops out at bottom 238) with a 12 px gap, so no DOM button ever
+       sits on a touch button. */
+    #btnMap { top: auto; bottom: 250px; right: 12px; }
+    #btnBackpack { top: auto; bottom: 308px; right: 12px; }
+    #btnMute { top: auto; bottom: 366px; right: 12px; }
+    #btnSettingsHud { top: auto; bottom: 424px; right: 12px; }
+    /* v6: "large" touch controls cannot fit a narrow phone at 1.2x (the
+       stick and the RUN/BAG column would overlap), so cap them at 1.1x
+       and nudge the right-hand columns apart. */
+    body.touch-large #stick { transform: scale(1.05); transform-origin: left bottom; }
+    body.touch-large .tbtn { transform: scale(1.1); }
+    body.touch-large #btnRun, body.touch-large #btnBackpackTouch { right: 168px; }
+    body.touch-large #btnEnter, body.touch-large #btnMapTouch { right: 96px; }
     /* Backpack rows: on a phone the side-by-side layout squeezes the
        weapon text into a sliver — stack info above a full-width button. */
     #backpackItems .shop-item { flex-direction: column; align-items: stretch; gap: 8px; }
@@ -113,13 +129,16 @@
   #btnFire { right: 24px; bottom: 96px; background: rgba(239,68,68,0.65); }
   #btnEnter { right: 100px; bottom: 40px; }
   #btnInteract { right: 24px; bottom: 176px; }
-  #btnRun { right: 180px; bottom: 40px; }
+  #btnRun { right: 174px; bottom: 40px; }
   #btnMapTouch { right: 100px; bottom: 120px; }
-  #btnBackpackTouch { right: 180px; bottom: 120px; }
+  #btnBackpackTouch { right: 174px; bottom: 120px; }
   @media (max-width: 640px) {
     .card h1 { font-size: 30px; }
     .card { padding: 16px; }
-    #toast { bottom: 190px; }
+    /* v6: the toast used to sit at bottom 190px, where it covered the
+       Backpack button (and, when two lines tall, the Map button too).
+       Above the HUD column (whose top is bottom 462px) it is clear. */
+    #toast { bottom: 472px; }
   }
 </style>
 </head>
@@ -219,6 +238,7 @@
     <h2 id="backpackTitle">Backpack</h2>
     <p id="backpackHint">Click a weapon to equip it · keys 1–6 switch · mouse wheel cycles · B closes</p>
     <div id="backpackItems"></div>
+    <button class="btn" id="btnHolsterBackpack" data-i18n="backpack.holster">Holster weapon (H)</button>
     <button class="btn secondary" id="btnCloseBackpack" data-i18n="backpack.close">Close (B)</button>
   </div>
 </div>

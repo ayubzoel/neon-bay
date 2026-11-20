@@ -258,8 +258,8 @@ export function updateMissions(state, dt) {
     if (checkReach(state, active, active.x, active.y)) {
       if (active.type === 'escort' && active.stage === 'go') {
         active.stage = 'return';
-        active.x = 1740;
-        active.y = 2558;
+        active.x = 435;
+        active.y = 852.7;
         showMessage(state, t('mission.escort'));
         continue;
       }

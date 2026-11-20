@@ -27,6 +27,8 @@ export const DEFAULT_BINDINGS = {
   pickpocket: 'KeyQ',
   park: 'KeyG',
   backpack: 'KeyB',
+  // v6: H holsters / draws the active weapon (combat.js toggleHolster).
+  holster: 'KeyH',
   map: 'KeyM',
   pause: 'KeyP',
   mute: 'KeyN',
@@ -39,7 +41,7 @@ export const DEFAULT_BINDINGS = {
 export const REBINDABLE_ACTIONS = [
   'moveUp', 'moveDown', 'moveLeft', 'moveRight', 'jump',
   'interact', 'enterVehicle', 'reload', 'pickpocket', 'park',
-  'backpack', 'map', 'pause', 'mute', 'radio',
+  'backpack', 'holster', 'map', 'pause', 'mute', 'radio',
 ];
 
 const CONFIRM_KEYS = new Set(['Space', 'Enter']);
