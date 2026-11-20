@@ -34,7 +34,7 @@
 import { AIRPORT, DISTRICT_RECTS, ROAD_ART_HALF, ROAD_RES_HALF, SAFE_HOUSE, SIDEWALK_WIDTH, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import {
   ACTIVITY_SPOTS, MOUNTAIN_PEAKS, NEON_SIGNS, PEAK_HOMES, PEAK_POIS,
-  SHOP_DEFS, SIDE_QUEST_PLACES, STORY_MISSIONS, WORSHIP_PLACES,
+  SHOP_DEFS, SIDE_QUEST_PLACES, STORY_MISSIONS, VITAL_PLACES, WORSHIP_PLACES,
 } from './data.js';
 import { RING, buildRoadGraph } from './roadgraph.js';
 import {
@@ -176,28 +176,30 @@ function buildMeshes(data) {
   // Shared dummy for composing instance matrices.
   const dummy = new THREE.Object3D();
   // `culled` gives the mesh a hand-computed bounding sphere so frustum
-  // culling works; `slack` pads it for the instances' own size. three
-  // r149 has no InstancedMesh.computeBoundingSphere (it arrived in r156)
-  // — calling it crashes the game — and r149's Frustum.intersectsObject
-  // reads object.boundingSphere when it is non-null, so a manual sphere
-  // keeps culling working. (The Node count stub faked the method, which
-  // is why this only surfaced in the real browser.) The default 20 m
-  // slack fits trees and lamps; a 63 m tower sticks ~39 m past its
-  // origin, so building groups pass 45 or the tower top would pop out
-  // of the sphere and get culled while still on screen.
+  // culling works per sector; `slack` pads it for the instances' own
+  // size. three r149 has no InstancedMesh.computeBoundingSphere (it
+  // arrived in r156) — calling it crashes the game — so the sphere is
+  // computed by hand from the instance positions. v7 fix: the sphere
+  // MUST live on the GEOMETRY, not the mesh. r149's
+  // Frustum.intersectsObject reads ONLY geometry.boundingSphere (the
+  // vendored source tests t.geometry's sphere, then applies the mesh
+  // matrix) and never looks at object.boundingSphere — the old code
+  // set im.boundingSphere, which r149 ignored, so culling tested the
+  // shared unit geometry's own tiny sphere at the world origin (0,0,0).
+  // Whenever the map corner left the frustum — e.g. the New Game spawn
+  // view, looking south — EVERY culled instanced mesh in the city (all
+  // buildings, roofs, doors, trees) was dropped and the city read as
+  // empty. A culled group therefore gets its own geometry clone
+  // carrying the hand-computed sector sphere, so r149 culls it per
+  // sector exactly as intended. (The mesh keeps its own boundingSphere
+  // copy too: render.js reads it for the tree fog-visibility check.)
+  // The default 20 m slack fits trees and lamps; a 63 m tower sticks
+  // ~39 m past its origin, so building groups pass 45 or the tower top
+  // would pop out of the sphere and get culled while still on screen.
   function makeInstanced(geo, mat, items, culled = false, slack = 20) {
     if (items.length === 0) return null;
-    const im = new THREE.InstancedMesh(geo, mat, items.length);
-    items.forEach((it, i) => {
-      dummy.position.set(it.x, it.y, it.z);
-      dummy.rotation.set(it.rx || 0, it.ry || 0, it.rz || 0);
-      dummy.scale.set(it.sx, it.sy, it.sz);
-      dummy.updateMatrix();
-      im.setMatrixAt(i, dummy.matrix);
-      if (it.color) im.setColorAt(i, new THREE.Color(it.color));
-    });
-    im.instanceMatrix.needsUpdate = true;
-    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    // The sector sphere first: the geometry clone below needs it.
+    let sphere = null;
     if (culled) {
       // Centre = mean of the instance positions; radius = the farthest
       // instance from that centre, plus slack for instance sizes.
@@ -210,7 +212,29 @@ function buildMeshes(data) {
         const d = Math.hypot(it.x - centre.x, it.y - centre.y, it.z - centre.z);
         if (d > radius) radius = d;
       }
-      im.boundingSphere = new THREE.Sphere(centre, radius + slack);
+      sphere = new THREE.Sphere(centre, radius + slack);
+    }
+    // Culled groups use a private geometry clone whose boundingSphere
+    // IS the sector sphere (see the note above); unculled groups keep
+    // the shared geometry with frustumCulled=false, as before.
+    const useGeo = culled ? geo.clone() : geo;
+    if (sphere) useGeo.boundingSphere = sphere;
+    const im = new THREE.InstancedMesh(useGeo, mat, items.length);
+    items.forEach((it, i) => {
+      dummy.position.set(it.x, it.y, it.z);
+      dummy.rotation.set(it.rx || 0, it.ry || 0, it.rz || 0);
+      dummy.scale.set(it.sx, it.sy, it.sz);
+      dummy.updateMatrix();
+      im.setMatrixAt(i, dummy.matrix);
+      if (it.color) im.setColorAt(i, new THREE.Color(it.color));
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    if (culled) {
+      // The sector sphere was already computed above (and put on the
+      // geometry clone); the mesh keeps a copy for render.js's tree
+      // fog-visibility check, which reads mesh.boundingSphere.
+      im.boundingSphere = sphere;
       im.frustumCulled = true;
     } else {
       im.frustumCulled = false;
@@ -741,6 +765,32 @@ function buildMeshes(data) {
     }
   }
 
+  // v7 vital places: a small roof marker on top of the hall, so a hospital
+  // and a police station read at a glance — a red cross lying on the roof
+  // for the hospital, a blue light bar for the police. Same 6 m hall as
+  // the worship places above.
+  for (const b of buildings) {
+    if (b.kind !== 'vital') continue;
+    const cx = b.x + b.w / 2;
+    const cz = b.y + b.h / 2;
+    const h = b.height;
+    if (b.vital === 'hospital') {
+      const crossV = new THREE.Mesh(unitBox, std('#dc2626'));
+      crossV.scale.set(0.8, 0.8, 2.4);
+      crossV.position.set(cx, h + 0.4, cz);
+      meshes.push(crossV);
+      const crossH = new THREE.Mesh(unitBox, std('#dc2626'));
+      crossH.scale.set(2.4, 0.8, 0.8);
+      crossH.position.set(cx, h + 0.4, cz);
+      meshes.push(crossH);
+    } else {
+      const bar = new THREE.Mesh(unitBox, std('#3b82f6'));
+      bar.scale.set(3, 0.5, 1);
+      bar.position.set(cx, h + 0.25, cz);
+      meshes.push(bar);
+    }
+  }
+
   // Trees: INSTANCED and SECTOR-SPLIT — two trunk meshes (normal +
   // palm) and one crown mesh per kind (pine cone, oak sphere, park sphere,
   // palm sphere), per map sector (SECTORS is defined above, before the
@@ -1015,6 +1065,9 @@ function buildMeshes(data) {
   // the district unlocks and the gate stands open; posts and booth stay.
   // v4.1, literal metres: 12 m gap, 1 m bar, 3 m posts, 3 m booth.
   for (const g of gates) {
+    // v7 minor gates are drawn instanced below (same shapes, 5 draw
+    // calls for all 44 instead of 4 meshes each).
+    if (g.minor) continue;
     const vertical = g.h > g.w;
     const cx = g.x + g.w / 2;
     const cy = g.y + g.h / 2;
@@ -1052,6 +1105,40 @@ function buildMeshes(data) {
       boothRoof.scale.set(3.2, 0.3, 3.2);
       boothRoof.position.set(booth.position.x, 3.15, booth.position.z);
       meshes.push(boothRoof);
+    }
+  }
+
+  // v7 minor gates (the border-stub bars): the same bar + stripe + posts
+  // as the gates above, but instanced — one bar mesh and one stripe mesh
+  // per district (tagged, so render.js hides each district's bars on
+  // unlock exactly like the individual bars) and one shared post mesh.
+  // 44 gates cost 5 draw calls this way instead of 176.
+  {
+    const minor = gates.filter((g) => g.minor);
+    if (minor.length > 0) {
+      const bars = { 1: [], 2: [] };
+      const stripes = { 1: [], 2: [] };
+      const posts = [];
+      for (const g of minor) {
+        const vertical = g.h > g.w;
+        const cx = g.x + g.w / 2;
+        const cy = g.y + g.h / 2;
+        bars[g.district].push({ x: cx, y: 0.5, z: cy, sx: g.w, sy: 1, sz: g.h });
+        stripes[g.district].push({ x: cx, y: 1.05, z: cy, sx: vertical ? 0.3 : g.w, sy: 0.15, sz: vertical ? g.h : 0.3 });
+        for (const s of [-1, 1]) {
+          posts.push(vertical
+            ? { x: cx, y: 1.5, z: cy + s * (g.h / 2 + 0.6), sx: 0.4, sy: 3, sz: 0.4 }
+            : { x: cx + s * (g.w / 2 + 0.6), y: 1.5, z: cy, sx: 0.4, sy: 3, sz: 0.4 });
+        }
+      }
+      for (const d of [1, 2]) {
+        const barMesh = makeInstanced(unitBox, std('#dc2626'), bars[d]);
+        if (barMesh) { barMesh.userData.gateDistrict = d; meshes.push(barMesh); }
+        const stripeMesh = makeInstanced(unitBox, basic('#f8fafc'), stripes[d]);
+        if (stripeMesh) { stripeMesh.userData.gateDistrict = d; meshes.push(stripeMesh); }
+      }
+      const postMesh = makeInstanced(unitBox, std('#f59e0b'), posts);
+      if (postMesh) meshes.push(postMesh);
     }
   }
 
@@ -1144,55 +1231,19 @@ function buildMeshes(data) {
     densityMeshes.lamps.push(poles, heads);
   }
 
-  // Traffic lights: a pole + head + three lamps at every at-grade
-  // junction of two major roads (graph.trafficLights). Poles and heads are
-  // instanced; the lamps are one InstancedMesh with per-instance colour,
-  // so render.js can repaint them live from graph.lightStateAt (red /
-  // yellow / green per axis, offset per node so the city is not in sync).
-  let trafficLightData = null;
-  if (graph && graph.trafficLights && graph.trafficLights.length > 0) {
-    const tls = graph.trafficLights;
-    const tlDummy = new THREE.Object3D();
-    const tlPoleGeo = new THREE.CylinderGeometry(0.08, 0.1, 5, 6);
-    tlPoleGeo.translate(0, 2.5, 0);
-    const tlPoles = new THREE.InstancedMesh(tlPoleGeo, std('#1f2937'), tls.length);
-    const tlHeadGeo = new THREE.BoxGeometry(0.4, 1, 0.3);
-    tlHeadGeo.translate(0, 5.2, 0);
-    const tlHeads = new THREE.InstancedMesh(tlHeadGeo, std('#111827'), tls.length);
-    const tlLampGeo = new THREE.SphereGeometry(0.09, 6, 4);
-    const tlLamps = new THREE.InstancedMesh(tlLampGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), tls.length * 3);
-    const dim = new THREE.Color('#1f2937');
-    tls.forEach((tlNode, i) => {
-      tlDummy.position.set(tlNode.x, 0, tlNode.y);
-      tlDummy.rotation.set(0, 0, 0);
-      tlDummy.scale.set(1, 1, 1);
-      tlDummy.updateMatrix();
-      tlPoles.setMatrixAt(i, tlDummy.matrix);
-      tlHeads.setMatrixAt(i, tlDummy.matrix);
-      // Three lamps on the south face of the head: red top, yellow, green.
-      const lampYs = [5.55, 5.2, 4.85];
-      for (let k = 0; k < 3; k += 1) {
-        tlDummy.position.set(tlNode.x, lampYs[k], tlNode.y + 0.18);
-        tlDummy.updateMatrix();
-        tlLamps.setMatrixAt(i * 3 + k, tlDummy.matrix);
-        tlLamps.setColorAt(i * 3 + k, dim);
-      }
-    });
-    tlPoles.instanceMatrix.needsUpdate = true;
-    tlHeads.instanceMatrix.needsUpdate = true;
-    tlLamps.instanceMatrix.needsUpdate = true;
-    if (tlLamps.instanceColor) tlLamps.instanceColor.needsUpdate = true;
-    tlPoles.frustumCulled = false;
-    tlHeads.frustumCulled = false;
-    tlLamps.frustumCulled = false;
-    meshes.push(tlPoles, tlHeads, tlLamps);
-    trafficLightData = { mesh: tlLamps, nodeIds: tls.map((n) => n.nodeId), count: tls.length };
-  }
+  // Traffic lights: NOT built here. v6 placed one pole per junction at
+  // the node centre (the middle of the intersection, on the asphalt,
+  // head unrotated) while vehicles.js also builds one pole per approach
+  // on the sidewalk corner — so every junction showed 5 poles, one of
+  // them in the middle of the road where cars drive through. v7 keeps
+  // only the per-approach poles (buildRoadFurniture in vehicles.js),
+  // derived from the real incident segments of each junction node.
+  const trafficLightData = null;
 
   // Remember full instance counts so setVisualDensity can scale them.
   for (const m of densityMeshes.trees) m.userData.fullCount = m.count;
-  // The road graph is exposed so render.js can repaint the traffic lights
-  // live (graph.lightStateAt) and Settings/tests can read the network.
+  // The road graph is exposed so Settings/tests can read the network
+  // (traffic-light phases live in graph.lightStateAt).
   return {
     meshes, densityMeshes, trafficLightData, lampCount, graph,
     markings: { dashes: markingDashCount, zebras: zebraCount },
@@ -1210,50 +1261,6 @@ export function buildWorld(rng) {
   const trees = [];
   const parks = [];
   const solids = [];
-
-  // ---- Barrier walls + gates (v3 logic, v4.1 metre sizes) ---------------
-  // The wall runs the whole length of each district border; the only gaps
-  // are the gate openings on the through-roads — plus the three ring-road
-  // crossings (Builder B's roadgraph routes the ring through the walls at
-  // (20,450), (2292.5,450) and (1500,1773.3), so the walls need matching
-  // gaps there or the player can never drive the ring after unlocking).
-  // Wall pieces are solids, gates are separate so they can open when the
-  // district unlocks. Walls are 1 m thick, 3 m tall; gates are 12 m wide.
-  const gates = [];
-  for (const gy of BEACH_GATE_YS) {
-    gates.push({ x: BEACH_BOUNDARY_X - 1, y: gy - 6, w: 2, h: 12, district: 1, label: t('gate.beach') });
-  }
-  for (const gx of PEAK_GATE_XS) {
-    gates.push({ x: gx - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, label: t('gate.peaks') });
-  }
-  // Ring-road gates (no booth, no staff — just a bar across the ring).
-  gates.push({ x: RING.west - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, ring: true, label: t('gate.ring.peaks') });
-  gates.push({ x: RING.east - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, ring: true, label: t('gate.ring.peaks') });
-  gates.push({ x: BEACH_BOUNDARY_X - 1, y: RING.south - 6, w: 2, h: 12, district: 1, ring: true, label: t('gate.ring.beach') });
-  const walls = [];
-  function wallRun(district, horizontal, fixed, from, to, gaps) {
-    // gaps: sorted [start, end] intervals along the run that stay open.
-    let cur = from;
-    const sorted = [...gaps].sort((a, b) => a[0] - b[0]);
-    for (const [gs, ge] of sorted) {
-      if (gs > cur) walls.push(horizontal
-        ? { x: cur, y: fixed - 0.5, w: gs - cur, h: 1, district }
-        : { x: fixed - 0.5, y: cur, w: 1, h: gs - cur, district });
-      cur = Math.max(cur, ge);
-    }
-    if (to > cur) walls.push(horizontal
-      ? { x: cur, y: fixed - 0.5, w: to - cur, h: 1, district }
-      : { x: fixed - 0.5, y: cur, w: 1, h: to - cur, district });
-  }
-  // Beach wall: x = 1500, y 450..1800, gaps at the two through streets
-  // and the ring-road south crossing.
-  wallRun(1, false, BEACH_BOUNDARY_X, PEAK_BOUNDARY_Y, WORLD_HEIGHT,
-    [...BEACH_GATE_YS.map((gy) => [gy - 6, gy + 6]), [RING.south - 6, RING.south + 6]]);
-  // Peaks wall: y = 450, x 0..2400, gaps at the two through avenues and
-  // the two ring-road crossings.
-  wallRun(2, true, PEAK_BOUNDARY_Y, 0, WORLD_WIDTH,
-    [...PEAK_GATE_XS.map((gx) => [gx - 6, gx + 6]), [RING.west - 6, RING.west + 6], [RING.east - 6, RING.east + 6]]);
-  for (const w of walls) solids.push(w);
 
   // ---- Roads (v3 centrelines, 7 m wide) ---------------------------------
   // City grid: 10 avenues x 9 streets. The roadgraph narrows them (already
@@ -1284,6 +1291,70 @@ export function buildWorld(rng) {
     ...PEAK_GATE_XS.map((gx) => ({ x: gx, y: PEAK_BOUNDARY_Y, district: 2 })),
   ];
   const graph = buildRoadGraph(roads, gateNodes, districtAt);
+
+  // ---- Barrier walls + gates (v3 logic, v4.1 metre sizes) ---------------
+  // The wall runs the whole length of each district border; the only gaps
+  // are the gate openings on the through-roads — plus the three ring-road
+  // crossings (Builder B's roadgraph routes the ring through the walls at
+  // (20,450), (2292.5,450) and (1500,1773.3), so the walls need matching
+  // gaps there or the player can never drive the ring after unlocking).
+  // v7: every border stub the road graph added (graph.borderGates) gets a
+  // gap + a bar too, so the wall the player sees matches the road the
+  // graph routes. Wall pieces are solids, gates are separate so they can
+  // open when the district unlocks. Walls are 1 m thick, 3 m tall; gates
+  // are 12 m wide.
+  // (This block runs AFTER buildRoadGraph on purpose: the border gates
+  // only exist once the graph has derived them from the final roads.)
+  const gates = [];
+  for (const gy of BEACH_GATE_YS) {
+    gates.push({ x: BEACH_BOUNDARY_X - 1, y: gy - 6, w: 2, h: 12, district: 1, label: t('gate.beach') });
+  }
+  for (const gx of PEAK_GATE_XS) {
+    gates.push({ x: gx - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, label: t('gate.peaks') });
+  }
+  // Ring-road gates (no booth, no staff — just a bar across the ring).
+  gates.push({ x: RING.west - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, ring: true, label: t('gate.ring.peaks') });
+  gates.push({ x: RING.east - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, ring: true, label: t('gate.ring.peaks') });
+  gates.push({ x: BEACH_BOUNDARY_X - 1, y: RING.south - 6, w: 2, h: 12, district: 1, ring: true, label: t('gate.ring.beach') });
+  // v7 border-stub gates (no booth, no staff — just a bar across the
+  // stub, drawn instanced by buildMeshes so 44 bars cost 5 draw calls,
+  // not 176). The staffed crossings are already in the list above, so
+  // they are skipped here to avoid a second bar on the same gap.
+  const staffedAt = new Set([
+    ...BEACH_GATE_YS.map((gy) => `${BEACH_BOUNDARY_X},${gy}`),
+    ...PEAK_GATE_XS.map((gx) => `${gx},${PEAK_BOUNDARY_Y}`),
+  ]);
+  const borderGates = (graph.borderGates || []).filter((b) => !staffedAt.has(`${b.x},${b.y}`));
+  for (const b of borderGates) {
+    if (b.district === 2) gates.push({ x: b.x - 6, y: PEAK_BOUNDARY_Y - 1, w: 12, h: 2, district: 2, ring: true, minor: true, label: t('gate.ring.peaks') });
+    else gates.push({ x: BEACH_BOUNDARY_X - 1, y: b.y - 6, w: 2, h: 12, district: 1, ring: true, minor: true, label: t('gate.ring.beach') });
+  }
+  const walls = [];
+  function wallRun(district, horizontal, fixed, from, to, gaps) {
+    // gaps: sorted [start, end] intervals along the run that stay open.
+    let cur = from;
+    const sorted = [...gaps].sort((a, b) => a[0] - b[0]);
+    for (const [gs, ge] of sorted) {
+      if (gs > cur) walls.push(horizontal
+        ? { x: cur, y: fixed - 0.5, w: gs - cur, h: 1, district }
+        : { x: fixed - 0.5, y: cur, w: 1, h: gs - cur, district });
+      cur = Math.max(cur, ge);
+    }
+    if (to > cur) walls.push(horizontal
+      ? { x: cur, y: fixed - 0.5, w: to - cur, h: 1, district }
+      : { x: fixed - 0.5, y: cur, w: 1, h: to - cur, district });
+  }
+  // Beach wall: x = 1500, y 450..1800, gaps at the through streets, the
+  // ring-road south crossing and every v7 border stub.
+  wallRun(1, false, BEACH_BOUNDARY_X, PEAK_BOUNDARY_Y, WORLD_HEIGHT,
+    [...BEACH_GATE_YS.map((gy) => [gy - 6, gy + 6]), [RING.south - 6, RING.south + 6],
+     ...borderGates.filter((b) => b.district === 1).map((b) => [b.y - 6, b.y + 6])]);
+  // Peaks wall: y = 450, x 0..2400, gaps at the through avenues, the two
+  // ring-road crossings and every v7 border stub.
+  wallRun(2, true, PEAK_BOUNDARY_Y, 0, WORLD_WIDTH,
+    [...PEAK_GATE_XS.map((gx) => [gx - 6, gx + 6]), [RING.west - 6, RING.west + 6], [RING.east - 6, RING.east + 6],
+     ...borderGates.filter((b) => b.district === 2).map((b) => [b.x - 6, b.x + 6])]);
+  for (const w of walls) solids.push(w);
 
   // ---- Keep-outs: nothing may be built on a mission / shop / activity --
   // point, or the player could never reach it (a building is solid). A
@@ -1474,6 +1545,25 @@ export function buildWorld(rng) {
             filled = true;
             continue;
           }
+          // v7: a vital place inside this plot takes the plot the same
+          // way — a hospital (white hall, red roof) or a police station
+          // (navy hall, blue roof), 2 per district, spread across the
+          // city instead of clustered in one place.
+          const vital = VITAL_PLACES.find((v) => v.district === district
+            && v.x >= rect.x + 12 && v.x <= rect.x + rect.w - 12
+            && v.y >= rect.y + 12 && v.y <= rect.y + rect.h - 12);
+          if (vital) {
+            const hospital = vital.kind === 'hospital';
+            const b = {
+              x: vital.x - 10, y: vital.y - 8, w: 20, h: 16,
+              color: hospital ? '#f8fafc' : '#1e3a5f', district, tall: false, kind: 'vital',
+              vital: vital.kind, height: 6, roofColor: hospital ? '#dc2626' : '#1d4ed8',
+            };
+            buildings.push(b);
+            solids.push(b);
+            filled = true;
+            continue;
+          }
           let kind;
           let height;
           let color;
@@ -1537,21 +1627,54 @@ export function buildWorld(rng) {
   fillCells(peaksBand, 2, peaksCells, { density: 0.4, maxPlots: 1, parkChance: 0 });
 
   // Worship places that fell outside every filled plot (e.g. in a park
-  // cell or a keep-out gap) still get built, on their own cleared patch.
+  // cell or a keep-out gap) still get built, on their own cleared patch —
+  // nudged in small steps (up to 16 m) until the patch is clear. Without
+  // the nudge the fallback skipped the hall whenever a random fillCells
+  // building overlapped its nominal rect, so on random seeds worship came
+  // out 4–5 of 6 instead of 6 — the 2-per-district count was luck, not a
+  // guarantee. The nudge keeps the hall in its own district and within
+  // ~16 m of its map/GPS point.
+  const HALL_NUDGES = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4], [8, 0], [-8, 0], [0, 8], [0, -8], [4, 4], [4, -4], [-4, 4], [-4, -4], [12, 0], [-12, 0], [0, 12], [0, -12], [8, 8], [8, -8], [-8, 8], [-8, -8], [16, 0], [-16, 0], [0, 16], [0, -16], [12, 12], [12, -12], [-12, 12], [-12, -12]];
+  function inDistrictRect(x, y, w, h, district) {
+    if (district === 0) return x >= 0 && x + w <= BEACH_BOUNDARY_X && y >= PEAK_BOUNDARY_Y && y + h <= WORLD_HEIGHT;
+    if (district === 1) return x >= BEACH_BOUNDARY_X && x + w <= WORLD_WIDTH && y >= PEAK_BOUNDARY_Y && y + h <= WORLD_HEIGHT;
+    return x >= 0 && x + w <= WORLD_WIDTH && y >= 0 && y + h <= PEAK_BOUNDARY_Y;
+  }
+  // Place a hall (worship/vital) centred near (cx, cy): first try the
+  // nominal spot, then the nudge offsets. Returns the placed building,
+  // or null when no offset fits (the caller counts it as skipped).
+  function placeHall(cx, cy, w, h, props) {
+    for (const [dx, dy] of HALL_NUDGES) {
+      const b = { x: cx + dx - w / 2, y: cy + dy - h / 2, w, h, ...props };
+      if (!inDistrictRect(b.x, b.y, b.w, b.h, props.district)) continue;
+      if (!plotClear(b.x, b.y, b.w, b.h) || overlapsBuilding(b.x, b.y, b.w, b.h)) continue;
+      buildings.push(b);
+      solids.push(b);
+      return b;
+    }
+    return null;
+  }
   let worshipSkipped = 0;
   for (const w of WORSHIP_PLACES) {
     if (buildings.some((b) => b.kind === 'worship' && Math.abs(b.x + b.w / 2 - w.x) < 5 && Math.abs(b.y + b.h / 2 - w.y) < 5)) continue;
-    const b = {
-      x: w.x - 10, y: w.y - 8, w: 20, h: 16, color: '#f8fafc',
+    if (!placeHall(w.x, w.y, 20, 16, {
+      color: '#f8fafc',
       district: w.district, tall: false, kind: 'worship', worship: w.kind,
       height: 6, roofColor: '#b91c1c',
-    };
-    if (!plotClear(b.x, b.y, b.w, b.h) || overlapsBuilding(b.x, b.y, b.w, b.h)) {
-      worshipSkipped += 1;
-      continue;
-    }
-    buildings.push(b);
-    solids.push(b);
+    })) worshipSkipped += 1;
+  }
+
+  // v7: vital places that fell outside every filled plot still get built,
+  // on their own cleared patch — same fallback as the worship places.
+  let vitalSkipped = 0;
+  for (const v of VITAL_PLACES) {
+    if (buildings.some((b) => b.kind === 'vital' && Math.abs(b.x + b.w / 2 - v.x) < 5 && Math.abs(b.y + b.h / 2 - v.y) < 5)) continue;
+    const hospital = v.kind === 'hospital';
+    if (!placeHall(v.x, v.y, 20, 16, {
+      color: hospital ? '#f8fafc' : '#1e3a5f',
+      district: v.district, tall: false, kind: 'vital', vital: v.kind,
+      height: 6, roofColor: hospital ? '#dc2626' : '#1d4ed8',
+    })) vitalSkipped += 1;
   }
 
   // Peaks: homes from data.js (along the roads) + POIs. A home too close
@@ -1814,7 +1937,8 @@ export function buildWorld(rng) {
   const built = buildMeshes(world);
   world.meshes = built.meshes;
   world.densityMeshes = built.densityMeshes;
-  world.trafficLightData = built.trafficLightData;
+  // (v7: no world.js traffic-light meshes any more — the per-approach
+  // poles live in vehicles.js road furniture, see buildRoadFurniture.)
   // Terrain height for player.js (v5b): the ground the hero stands on.
   // Mounds are half-buried unit spheres scaled (rx, h, rz) about y=0,
   // so the surface over a mound is the ellipsoid height
@@ -1880,6 +2004,8 @@ export function buildWorld(rng) {
     palms: treesByKind.palm || 0,
     worship: buildings.filter((b) => b.kind === 'worship').length,
     worshipSkipped,
+    vital: buildings.filter((b) => b.kind === 'vital').length,
+    vitalSkipped,
     peaksHomes: buildings.filter((b) => b.district === 2 && b.kind === 'house').length,
     peaksPois: buildings.filter((b) => b.kind === 'poi').length,
     downtownCells,

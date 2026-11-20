@@ -13,7 +13,7 @@
 // canvas; the game loop pauses while it is open (main.js), so the world
 // behind it is frozen. No network, no assets: every glyph is text.
 import { DISTRICT_RECTS, SAFE_HOUSE, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
-import { ACTIVITY_SPOTS, PEAK_HOMES, WORSHIP_PLACES } from './data.js';
+import { ACTIVITY_SPOTS, PEAK_HOMES, VITAL_PLACES, WORSHIP_PLACES } from './data.js';
 import { showMessage } from './state.js';
 import { missionTitle } from './missions.js';
 import { addStrings, onLangChange, t } from './i18n.js';
@@ -42,6 +42,8 @@ addStrings('en', {
   'map.symbol.road': 'Road point',
   'map.symbol.player': 'You — Leo Vance',
   'map.symbol.worship': 'Place of worship',
+  'map.symbol.hospital': 'Hospital',
+  'map.symbol.police': 'Police station',
   'map.symbol.housing': 'Housing block',
   'map.symbol.flyover': 'Ring-road flyover',
   'map.lockedLegend': 'Locked district — finish the mission to open it',
@@ -90,6 +92,8 @@ addStrings('id', {
   'map.symbol.road': 'Titik jalan',
   'map.symbol.player': 'Kamu — Leo Vance',
   'map.symbol.worship': 'Tempat ibadah',
+  'map.symbol.hospital': 'Rumah sakit',
+  'map.symbol.police': 'Kantor polisi',
   'map.symbol.housing': 'Blok perumahan',
   'map.symbol.flyover': 'Flyover jalan lingkar',
   'map.lockedLegend': 'Wilayah terkunci — selesaikan misi untuk membukanya',
@@ -126,7 +130,8 @@ const GROUND = ['#3a3f4a', '#d9b96a', '#6b7a72'];
  * housing blocks and ring-road flyovers. Worship places and peak homes
  * come straight from Builder A's data.js (WORSHIP_PLACES, PEAK_HOMES) so
  * the symbols always match the buildings world.js actually builds; the
- * map never invents a place of its own.
+ * map never invents a place of its own. v7 adds the vital places
+ * (VITAL_PLACES: a hospital and a police station per district) the same way.
  * NOTE for the tester / Builders A+B: the four flyovers mark the ring
  * road's four legs at the map's edge midpoints — no ring-road geometry
  * exists in data.js/roadgraph.js yet, so these four points are
@@ -136,6 +141,9 @@ const GROUND = ['#3a3f4a', '#d9b96a', '#6b7a72'];
 export const V4_LANDMARKS = [
   ...WORSHIP_PLACES.map((w, i) => ({
     id: `lm-worship-${i}`, kind: 'worship', label: w.name, x: w.x, y: w.y,
+  })),
+  ...VITAL_PLACES.map((v, i) => ({
+    id: `lm-vital-${i}`, kind: v.kind, label: v.name, x: v.x, y: v.y,
   })),
   ...PEAK_HOMES.map((h, i) => ({
     id: `lm-home-${i}`, kind: 'housing',
@@ -195,7 +203,10 @@ export const SYMBOLS = {
   road: { emoji: '📍', color: '#22d3ee', label: 'Road point', labelKey: 'map.symbol.road' },
   player: { emoji: '🔺', color: '#fde047', label: 'You — Leo Vance', labelKey: 'map.symbol.player' },
   // v4 landmarks (Builder C): houses of worship, housing, ring-road flyovers.
+  // v7: vital places (hospital / police) are landmarks the same way.
   worship: { emoji: '⛪', color: '#fbbf24', label: 'Place of worship', labelKey: 'map.symbol.worship' },
+  hospital: { emoji: '🏥', color: '#f87171', label: 'Hospital', labelKey: 'map.symbol.hospital' },
+  police: { emoji: '🚔', color: '#60a5fa', label: 'Police station', labelKey: 'map.symbol.police' },
   housing: { emoji: '🏘️', color: '#fb923c', label: 'Housing block', labelKey: 'map.symbol.housing' },
   flyover: { emoji: '🌉', color: '#a78bfa', label: 'Ring-road flyover', labelKey: 'map.symbol.flyover' },
 };
@@ -212,7 +223,7 @@ export function symbolLabel(kind) {
 export const LEGEND_ORDER = [
   'mission', 'side', 'food', 'gun', 'clothes', 'mods', 'safehouse',
   'pool', 'golf', 'race', 'swim', 'darts', 'gym', 'fish', 'airport', 'npc',
-  'worship', 'housing', 'flyover', 'player',
+  'worship', 'hospital', 'police', 'housing', 'flyover', 'player',
 ];
 
 /** Every place the player can navigate to right now. */
@@ -239,6 +250,7 @@ export function getDestinations(state, world) {
   }
   add({ id: 'airport', kind: 'airport', label: t('map.dest.airport'), x: 1162.5, y: 1570 });
   // v4 landmarks (worship / housing / flyovers): navigable like any shop.
+  // v7: vital places (hospital / police) are destinations the same way.
   // They render on the big map, the minimap (render.js draws every
   // destination) and in the Landmarks list below. Labels resolve here so
   // a language switch re-labels them on the next list rebuild.
@@ -723,7 +735,8 @@ export function createMapController(opts) {
       [t('map.group.places'), (d) => ['safehouse', 'airport', 'npc'].includes(d.kind)],
       [t('map.group.activities'), (d) => ['pool', 'golf', 'race', 'swim', 'darts', 'gym', 'fish'].includes(d.kind)],
       // v4 landmarks: worship, housing, ring-road flyovers.
-      [t('map.group.landmarks'), (d) => ['worship', 'housing', 'flyover'].includes(d.kind)],
+      // v7: vital places (hospital, police) join the Landmarks group.
+      [t('map.group.landmarks'), (d) => ['worship', 'hospital', 'police', 'housing', 'flyover'].includes(d.kind)],
     ];
     const dests = getDestinations(state, world);
     for (const [title, match] of groups) {

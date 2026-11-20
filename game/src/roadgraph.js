@@ -4,6 +4,17 @@
 // on sidewalks, traffic stays in its lane, and police chase along roads
 // instead of cutting through buildings.
 //
+// v7 — border connectors: every road that reaches a district border now
+// continues across it through a gate (locked until its district unlocks),
+// so no road ends in a dead end at a wall any more. The connector is a
+// SHORT stub — from the border to the nearest cross-road on the other
+// side — derived from the roads that already exist, never hardcoded (see
+// connectBorders() in prepareRoads). Gate nodes for the stubs are
+// returned as borderGates so world.js can cut the wall and draw the bar.
+// v7 also pulls the three lake-split roads back to their last cross-road
+// (1575 / 2025) and skips the 4 m end-node stub past a gate, an
+// intersection or a ring corner, so the graph has no degree-1 node left.
+//
 // v4 — 1 unit = 1 metre, Leo Vance 1.8 m. The v3 roads were 64 m wide
 // (a 16-lane highway) with 46 m cars; now a residential street is 7 m
 // (2 x 3.5 m lanes) and an arterial 16 m (4 x 3.5 m lanes + 1.5 m median),
@@ -215,9 +226,146 @@ function prepareRoads(roads) {
   addRoad({ x: RING.west - ROAD_ART_HALF, y: RING.north - ROAD_ART_HALF, w: RING.east - RING.west + ROAD_ART_HALF * 2, h: ROAD_ART_HALF * 2, vertical: false, type: 'arterial', major: true });
   addRoad({ x: RING.west - ROAD_ART_HALF, y: RING.south - ROAD_ART_HALF, w: RING.east - RING.west + ROAD_ART_HALF * 2, h: ROAD_ART_HALF * 2, vertical: false, type: 'arterial', major: true });
 
+  // ---- v7: lake shore --------------------------------------------------
+  // The three peaks roads split around the lake (y=50/90/150) used to run
+  // to the water's edge and end in a dead end at the shore. Pull each
+  // piece back to the last cross-road it meets (1575 west of the lake,
+  // 2025 east of it), so every piece ends at an intersection instead of
+  // nowhere. (The 4 m end-node stub past that intersection is skipped by
+  // buildRoadGraph below, so the road's last node IS the intersection.)
+  for (const r of roads) {
+    if (r.vertical) continue;
+    const cy = r.y + r.h / 2;
+    if (Math.abs(cy - 50) > 0.01 && Math.abs(cy - 90) > 0.01 && Math.abs(cy - 150) > 0.01) continue;
+    if (r.x < 1575 && r.x + r.w > 1575 && r.x + r.w < 2025) r.w = 1575 - r.x; // west piece ends at 1575
+    if (r.x < 2025 && r.x + r.w > 2025 && r.x > 1575) { r.w -= (2025 - r.x); r.x = 2025; } // east piece starts at 2025
+  }
+
+  // ---- v7: border connectors -------------------------------------------
+  // Every road that reaches a district border continues across it through
+  // a gate, so no street ends at a wall any more. The connector is a
+  // SHORT stub — from the border to the nearest cross-road on the other
+  // side (a peaks stub runs 400..450, a downtown stub 450..566.7, a beach
+  // stub 450..516.7, a beach-road stub 1500..1550, a downtown-street stub
+  // 1425..1500) — long enough to join the network, short enough to stay
+  // clear of everything the full road would hit (the lake, the safe
+  // house, the shops, the airport, the peaks homes and POIs). The stubs
+  // are DERIVED from the roads that already exist, never hardcoded: a
+  // vertical road touching y=450 from the south with no matching road
+  // north of it gains a peaks stub, and vice versa; same for horizontal
+  // roads across x=1500. The ring road (arterial) already crosses at its
+  // own gates and is skipped here. Each stub reports its border gate
+  // (x, y, district) so buildRoadGraph can put a gate node on it and
+  // world.js can cut the wall and draw the bar.
+  const borderGates = [];
+  function nearestCrossRoad(x, y, dir) {
+    // Nearest horizontal-road centreline north (dir=-1) or south (dir=+1)
+    // of y whose span covers x — the far end of a stub starting at y.
+    let best = null;
+    for (const r of roads) {
+      if (r.vertical || r.type === 'arterial') continue;
+      const cy = r.y + r.h / 2;
+      if (dir < 0 && (cy >= y || cy >= 450)) continue;
+      if (dir > 0 && (cy <= y || cy <= 450)) continue;
+      if (x < r.x || x > r.x + r.w) continue;
+      if (best === null || (dir < 0 ? cy > best : cy < best)) best = cy;
+    }
+    return best;
+  }
+  function nearestCrossAvenue(x, y, dir) {
+    // Nearest vertical-road centreline west (dir=-1) or east (dir=+1) of
+    // x whose span covers y — the far end of a stub starting at x.
+    let best = null;
+    for (const r of roads) {
+      if (!r.vertical || r.type === 'arterial') continue;
+      const cx = r.x + r.w / 2;
+      if (dir < 0 && (cx >= x || cx >= 1500)) continue;
+      if (dir > 0 && (cx <= x || cx <= 1500)) continue;
+      if (y < r.y || y > r.y + r.h) continue;
+      if (best === null || (dir < 0 ? cx > best : cx < best)) best = cx;
+    }
+    return best;
+  }
+  // Peaks border (y=450): vertical roads on each side.
+  {
+    const southXs = new Set();
+    const northXs = new Set();
+    for (const r of roads) {
+      if (!r.vertical || r.type === 'arterial') continue;
+      const cx = r.x + r.w / 2;
+      if (r.y <= 450 && r.y + r.h > 450) southXs.add(cx); // extends south of the border
+      if (r.y < 450 && r.y + r.h >= 450) northXs.add(cx); // extends north of the border
+    }
+    for (const cx of southXs) {
+      if (northXs.has(cx)) continue; // a through-road already: the gate is the staffed one
+      const northEnd = nearestCrossRoad(cx, 450, -1);
+      if (northEnd === null) continue;
+      vRoad(cx, northEnd, 450 - northEnd); // peaks stub, border -> nearest peaks road
+      borderGates.push({ x: cx, y: 450, district: 2 });
+    }
+    for (const cx of northXs) {
+      if (southXs.has(cx)) continue;
+      const southEnd = nearestCrossRoad(cx, 450, 1);
+      if (southEnd === null) continue;
+      vRoad(cx, 450, southEnd - 450); // city stub, border -> nearest city street
+      borderGates.push({ x: cx, y: 450, district: 2 });
+    }
+    // Through-roads that already exist on both sides still need a gate
+    // node on the border, or the two sides never meet (street 1166.7
+    // used to end 8 m apart on either side of the wall). The staffed
+    // crossings (375, 1125) are in this set too; buildRoadGraph dedupes
+    // the node, and world.js skips the duplicate bar.
+    for (const cx of southXs) {
+      if (northXs.has(cx)) borderGates.push({ x: cx, y: 450, district: 2 });
+    }
+  }
+  // Beach border (x=1500): horizontal roads on each side. Only roads
+  // south of y=450 count — the peaks roads (y<450) run east-west across
+  // x=1500 inside the Peaks district, not across the beach border.
+  {
+    const westYs = new Set();
+    const eastYs = new Set();
+    for (const r of roads) {
+      if (r.vertical || r.type === 'arterial') continue;
+      const cy = r.y + r.h / 2;
+      if (cy < 450) continue;
+      if (r.x < 1500 && r.x + r.w >= 1500) westYs.add(cy); // reaches the border from the west
+      if (r.x <= 1500 && r.x + r.w > 1500) eastYs.add(cy); // reaches the border from the east
+    }
+    for (const cy of westYs) {
+      if (eastYs.has(cy)) continue;
+      const eastEnd = nearestCrossAvenue(1500, cy, 1);
+      if (eastEnd === null) continue;
+      hRoad(1500, cy, eastEnd - 1500); // beach stub, border -> nearest beach avenue
+      borderGates.push({ x: 1500, y: cy, district: 1 });
+    }
+    for (const cy of eastYs) {
+      if (westYs.has(cy)) continue;
+      const westEnd = nearestCrossAvenue(1500, cy, -1);
+      if (westEnd === null) continue;
+      hRoad(westEnd, cy, 1500 - westEnd); // downtown stub, nearest avenue -> border
+      borderGates.push({ x: 1500, y: cy, district: 1 });
+    }
+    // Through-roads on both sides (see the peaks note above): a gate
+    // node joins them — street 1166.7 is the one that was missing it.
+    for (const cy of westYs) {
+      if (eastYs.has(cy)) borderGates.push({ x: 1500, y: cy, district: 1 });
+    }
+  }
+
   // ---- Mark the elevated roads (their segments are built separately) ---
+  // Match by centreline AND by span: the elevated stretch [from, to]
+  // must lie inside the road's own span. Centreline alone is not enough
+  // — the peaks climbs at x=375/1125 share their centreline with the
+  // downtown avenue below the border, and `find` used to return the
+  // avenue first (v6 bug): the avenue lost all its asphalt and sidewalk
+  // in downtown (the renderer only draws the hill strips over 26.7..450)
+  // while the real climb stayed flat and wore a floating ribbon of hill
+  // strips above it. If no candidate contains the stretch (a layout we
+  // have not seen yet), fall back to the first centreline match.
   function markElevated(cx, kind, extra) {
-    const r = roads.find((q) => q.vertical && Math.abs((q.x + q.w / 2) - cx) < 1);
+    const cands = roads.filter((q) => q.vertical && Math.abs((q.x + q.w / 2) - cx) < 1);
+    const r = cands.find((q) => q.y <= extra.from + 1 && q.y + q.h >= extra.to - 1) || cands[0];
     if (!r) return;
     r.elevated = kind;
     r.skipGeneric = true;
@@ -230,17 +378,19 @@ function prepareRoads(roads) {
     if (r.type === 'arterial') stats.arterial += 1;
     else stats.residential += 1;
   }
-  return stats;
+  return { stats, borderGates };
 }
 
 export function buildRoadGraph(roads, gateNodes, districtAt) {
-  const roadStats = prepareRoads(roads);
+  const { stats: roadStats, borderGates } = prepareRoads(roads);
   // Ring crossings over the district walls use the same gate mechanism as
-  // the staffed gates (see RING above).
+  // the staffed gates (see RING above); v7 adds one gate per border stub
+  // (prepareRoads), so every road that reaches a border crosses it gated.
   const allGates = [...(gateNodes || []),
     { x: RING.west, y: 450, district: 2 },
     { x: RING.east, y: 450, district: 2 },
     { x: 1500, y: RING.south, district: 1 },
+    ...borderGates,
   ];
 
   const nodes = [];
@@ -275,20 +425,36 @@ export function buildRoadGraph(roads, gateNodes, districtAt) {
       }
     }
   }
-  // Road ends, so paths can reach the edge of the map.
-  for (const r of roads) {
-    if (r.vertical) {
-      addNode(r.x + r.w / 2, r.y + 4, false, 0, 0).end = true;
-      addNode(r.x + r.w / 2, r.y + r.h - 4, false, 0, 0).end = true;
-    } else {
-      addNode(r.x + 4, r.y + r.h / 2, false, 0, 0).end = true;
-      addNode(r.x + r.w - 4, r.y + r.h / 2, false, 0, 0).end = true;
-    }
-  }
-  // Gate crossings on the district borders.
+  // Gate crossings on the district borders. These go BEFORE the road
+  // ends below: a road end 4 m from a gate is a stub past the gate, not
+  // a real end, and the skip in the ends loop needs the gate to exist.
   for (const g of allGates) {
     const n = addNode(g.x, g.y, true, 0, 0);
     n.gateDistrict = g.district;
+  }
+  // Road ends, so paths can reach the edge of the map.
+  // v7: skip an end node when a node already sits within 10 m on the
+  // same centreline (a gate, an intersection, or a ring corner) — the
+  // road rect runs 4 m past that node, and the 4 m stub would otherwise
+  // be a degree-1 dead end in the graph (the ring corners and the border
+  // stubs both end this way).
+  function nearNodeOnLine(x, y, vertical) {
+    for (const n of nodes) {
+      if (n.level !== 0) continue;
+      if (vertical ? (n.x === x && Math.abs(n.y - y) <= 10) : (n.y === y && Math.abs(n.x - x) <= 10)) return true;
+    }
+    return false;
+  }
+  for (const r of roads) {
+    if (r.vertical) {
+      const vx = r.x + r.w / 2;
+      if (!nearNodeOnLine(vx, r.y + 4, true)) addNode(vx, r.y + 4, false, 0, 0).end = true;
+      if (!nearNodeOnLine(vx, r.y + r.h - 4, true)) addNode(vx, r.y + r.h - 4, false, 0, 0).end = true;
+    } else {
+      const hy = r.y + r.h / 2;
+      if (!nearNodeOnLine(r.x + 4, hy, false)) addNode(r.x + 4, hy, false, 0, 0).end = true;
+      if (!nearNodeOnLine(r.x + r.w - 4, hy, false)) addNode(r.x + r.w - 4, hy, false, 0, 0).end = true;
+    }
   }
 
   // Segments: along each road, join consecutive nodes on its centreline.
@@ -675,7 +841,7 @@ export function buildRoadGraph(roads, gateNodes, districtAt) {
   }
 
   return {
-    nodes, segments, trafficLights, roadStats,
+    nodes, segments, trafficLights, roadStats, borderGates,
     nearestNode, nearestSegmentPoint, elevationAt,
     lanePoint, sidewalkPoint, nearestSidewalkPoint, nearestLanePoint,
     findPath, sidewalkWaypoints, isOnRoad, isOnSidewalk,

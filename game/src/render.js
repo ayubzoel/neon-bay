@@ -187,7 +187,6 @@ export function createRenderer(canvas) {
   const raycaster = new THREE.Raycaster();
   const _ndc = new THREE.Vector2();
   let lastTime = null;
-  let lastLightRepaint = -10;
   let lastNightGlowT = -10;
   let lastUnlockedKey = null;
   let currentWorld = null;
@@ -787,23 +786,10 @@ export function createRenderer(canvas) {
       updateNightGlow(state);
     }
 
-    // Traffic lights: repaint the lamp instances once per second from the
-    // road graph's cycle — lightStateAt(nodeId, t) returns {ns, ew} per
-    // node; the lamps sit on the south face, so they show the NS axis.
-    if (world && world.trafficLightData && world.graph && world.graph.lightStateAt && time - lastLightRepaint >= 1) {
-      lastLightRepaint = time;
-      const { mesh, nodeIds } = world.trafficLightData;
-      const dim = new THREE.Color('#1f2937');
-      const lit = { red: new THREE.Color('#ef4444'), yellow: new THREE.Color('#fbbf24'), green: new THREE.Color('#22c55e') };
-      for (let i = 0; i < nodeIds.length; i += 1) {
-        const st = world.graph.lightStateAt(nodeIds[i], time);
-        const ns = st ? st.ns : 'red';
-        mesh.setColorAt(i * 3 + 0, ns === 'red' ? lit.red : dim);
-        mesh.setColorAt(i * 3 + 1, ns === 'yellow' ? lit.yellow : dim);
-        mesh.setColorAt(i * 3 + 2, ns === 'green' ? lit.green : dim);
-      }
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
+    // Traffic lights: the per-approach poles are road furniture
+    // (vehicles.js drawRoadFurniture repaints their lamps from the same
+    // graph.lightStateAt cycle). v7 removed the old centre-of-junction
+    // poles from world.js, so there is nothing to repaint here any more.
 
     drawMissionMarkers(pool, state);
     drawNav3D(state, time);

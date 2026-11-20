@@ -1139,30 +1139,65 @@ function buildRoadFurniture(T, graph) {
     }
   }
 
-  // Traffic lights: four approaches per major junction (one pole per
-  // approach, on the sidewalk at the near-right corner, head ~5 m up).
+  // Traffic lights: one pole per REAL approach of each major junction
+  // (v7). The approaches are derived from the junction node's incident
+  // segments, not assumed to be four: a T-junction has three approaches,
+  // and a phantom fourth pole would stand on a corner no traffic ever
+  // comes from. For each segment the approach direction is the direction
+  // of travel toward the node; the pole stands at the near-right corner
+  // (right-hand traffic) — back from the node by the cross road's
+  // sidewalk-centre offset, and out by the approach road's own
+  // sidewalk-centre offset — so the pole is exactly on the sidewalk
+  // corner, never in the middle of the road, never off the sidewalk
+  // (the v6 formula used maxHalf for both offsets, which pushed the
+  // poles 3.25 m past the sidewalk wherever a residential road met the
+  // arterial ring). The lamp face points back toward the incoming
+  // driver, and the head is wide across the road it faces.
   // The lamp positions are recorded so the per-frame update can light them.
+  const SIDEWALK_CENTRE = 1.25; // sidewalk centre = road half-width + 2.5 / 2
   for (const light of graph.trafficLights) {
     const node = graph.nodes[light.nodeId];
-    let maxHalf = 3.5;
-    for (const segId of node.segs) maxHalf = Math.max(maxHalf, graph.segments[segId].half);
-    const off = maxHalf + 1.25;
-    const approaches = [
-      { axis: 'ns', px: node.x + off, py: node.y + off, lx: 0, lz: 0.3, wideX: true }, // northbound
-      { axis: 'ns', px: node.x - off, py: node.y - off, lx: 0, lz: -0.3, wideX: true }, // southbound
-      { axis: 'ew', px: node.x - off, py: node.y + off, lx: -0.3, lz: 0, wideX: false }, // eastbound
-      { axis: 'ew', px: node.x + off, py: node.y - off, lx: 0.3, lz: 0, wideX: false }, // westbound
-    ];
-    for (const a of approaches) {
-      poles.push({ px: a.px, py: TRAFFIC_LIGHT_POLE_HEIGHT / 2, pz: a.py, rx: 0, ry: 0, rz: 0, sx: 0.14, sy: TRAFFIC_LIGHT_POLE_HEIGHT, sz: 0.14 });
-      heads.push(a.wideX
-        ? { px: a.px, py: 4.4, pz: a.py, rx: 0, ry: 0, rz: 0, sx: 0.6, sy: 1.1, sz: 0.35 }
-        : { px: a.px, py: 4.4, pz: a.py, rx: 0, ry: 0, rz: 0, sx: 0.35, sy: 1.1, sz: 0.6 });
+    const seenDir = new Set();
+    for (const segId of node.segs) {
+      const s = graph.segments[segId];
+      // Far end of this segment: travel toward the node from there.
+      const ox = s.a === node.id ? s.bx : s.ax;
+      const oy = s.a === node.id ? s.by : s.ay;
+      let dx = node.x - ox;
+      let dy = node.y - oy;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len;
+      dy /= len;
+      const dkey = `${dx.toFixed(3)},${dy.toFixed(3)}`;
+      if (seenDir.has(dkey)) continue; // two collinear segments, same approach
+      seenDir.add(dkey);
+      const axis = s.vertical ? 'ns' : 'ew';
+      // Widest road crossing this approach at the node (the cross road
+      // whose sidewalk corner the pole stands on).
+      let crossHalf = 0;
+      for (const sid2 of node.segs) {
+        const s2 = graph.segments[sid2];
+        if (s2.vertical !== s.vertical) crossHalf = Math.max(crossHalf, s2.half);
+      }
+      if (crossHalf === 0) crossHalf = s.half;
+      const along = crossHalf + SIDEWALK_CENTRE;
+      const lat = s.half + SIDEWALK_CENTRE;
+      const rx = -dy; // right of the direction of travel (y grows south)
+      const ry = dx;
+      const px = node.x - dx * along + rx * lat;
+      const py = node.y - dy * along + ry * lat;
+      const lx = -dx * 0.3; // lamp face toward the incoming driver
+      const lz = -dy * 0.3;
+      const wideX = axis === 'ns';
+      poles.push({ px, py: TRAFFIC_LIGHT_POLE_HEIGHT / 2, pz: py, rx: 0, ry: 0, rz: 0, sx: 0.14, sy: TRAFFIC_LIGHT_POLE_HEIGHT, sz: 0.14 });
+      heads.push(wideX
+        ? { px, py: 4.4, pz: py, rx: 0, ry: 0, rz: 0, sx: 0.6, sy: 1.1, sz: 0.35 }
+        : { px, py: 4.4, pz: py, rx: 0, ry: 0, rz: 0, sx: 0.35, sy: 1.1, sz: 0.6 });
       const lampYs = { red: 4.75, yellow: 4.4, green: 4.05 };
       for (const color of ['red', 'yellow', 'green']) {
         lampSpots.push({
-          nodeId: light.nodeId, axis: a.axis, color,
-          x: a.px + a.lx, y: lampYs[color], z: a.py + a.lz,
+          nodeId: light.nodeId, axis, color,
+          x: px + lx, y: lampYs[color], z: py + lz,
         });
       }
     }
@@ -1179,6 +1214,14 @@ function buildRoadFurniture(T, graph) {
   // instance's half-diagonal — a long deck slab extends far past its
   // origin, and the sphere must cover it. Same approach as world.js
   // makeInstanced (trees), just finer sectors.
+  // v7 fix (same root cause as world.js): r149's Frustum.intersectsObject
+  // reads ONLY geometry.boundingSphere and never object.boundingSphere,
+  // so a hand-computed mesh.boundingSphere was ignored and culling tested
+  // the shared unit geometry's tiny sphere at the world origin — whenever
+  // the map corner left the frustum, ALL road furniture (decks, barriers,
+  // pillars, medians, dashes, traffic-light poles/heads/lamps) vanished.
+  // instanced() therefore clones the geometry per sector mesh and puts
+  // the hand-computed sphere on the clone, which r149 does read.
   const SECTOR_W = WORLD_WIDTH / FURNITURE_SECTORS.cols;
   const SECTOR_H = WORLD_HEIGHT / FURNITURE_SECTORS.rows;
   const SECTOR_N = FURNITURE_SECTORS.cols * FURNITURE_SECTORS.rows;
@@ -1189,11 +1232,6 @@ function buildRoadFurniture(T, graph) {
   }
   function instanced(list, geometry, material) {
     if (list.length === 0) return null;
-    const mesh = new T.InstancedMesh(geometry, material, list.length);
-    list.forEach((tr, i) => {
-      mesh.setMatrixAt(i, _furnMatrix(tr.px, tr.py, tr.pz, tr.rx, tr.ry, tr.rz, tr.sx, tr.sy, tr.sz, T));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
     const centre = new T.Vector3();
     for (const tr of list) {
       centre.x += tr.px;
@@ -1209,7 +1247,18 @@ function buildRoadFurniture(T, graph) {
       const halfDiag = 0.5 * Math.hypot(tr.sx || 1, tr.sy || 1, tr.sz || 1);
       radius = Math.max(radius, Math.sqrt(dx * dx + dy * dy + dz * dz) + halfDiag);
     }
-    mesh.boundingSphere = new T.Sphere(centre, radius);
+    // v7: the sector sphere must live on the GEOMETRY (see the note
+    // above) — r149 culling never reads mesh.boundingSphere. Each sector
+    // mesh gets its own geometry clone carrying its sphere.
+    const sphere = new T.Sphere(centre, radius);
+    const geo = geometry.clone();
+    geo.boundingSphere = sphere;
+    const mesh = new T.InstancedMesh(geo, material, list.length);
+    list.forEach((tr, i) => {
+      mesh.setMatrixAt(i, _furnMatrix(tr.px, tr.py, tr.pz, tr.rx, tr.ry, tr.rz, tr.sx, tr.sy, tr.sz, T));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.boundingSphere = sphere;
     mesh.frustumCulled = true;
     return mesh;
   }
@@ -1340,7 +1389,7 @@ function drawRoadFurniture(pool, state, time) {
   // traffic logic, so a car that stops at red sees a red lamp. Only
   // approaches whose colour CHANGED since the last frame are touched —
   // a phase flips ~4x per 30 s per light, so this is a handful of
-  // setMatrixAt calls per frame instead of 1824, and only the sector
+  // setMatrixAt calls per frame instead of 1713, and only the sector
   // meshes that changed get their instance buffer re-uploaded.
   const t = state.trafficTime || 0;
   const zero = new T.Matrix4().makeScale(0, 0, 0);

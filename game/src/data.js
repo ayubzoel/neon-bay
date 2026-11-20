@@ -214,15 +214,30 @@ export const ACTIVITY_SPOTS = [
 // kind: 'mosque' (dome + minaret), 'church' (tower + pitched roof),
 // 'temple' (tiered roofs). x/y is the centre of the plot; world.js builds
 // the hall around it and keeps other buildings clear of it.
+// v7: 2 per district (was 3/2/3) — the most spread-out pair in each city,
+// so no district has two of them piled on one street.
 export const WORSHIP_PLACES = [
   { name: 'Bayview Chapel', kind: 'church', x: 287.5, y: 740, district: 0 },
-  { name: 'Downtown Temple', kind: 'temple', x: 587.5, y: 600, district: 0 },
   { name: 'Sunset Mosque', kind: 'mosque', x: 887.5, y: 1200, district: 0 },
-  { name: 'Harbor Chapel', kind: 'church', x: 1887.5, y: 1066.7, district: 1 },
+  { name: 'Harbor Chapel', kind: 'church', x: 1887.5, y: 1070, district: 1 }, // v7: y 1066.7 -> 1070 — hall (y 1062..1078) overlapped a fillCells mid building ending at y 1060 by 1.3 m, so the fallback skipped it (worship 5/6 in browser)
   { name: 'Palm Mosque', kind: 'mosque', x: 2050, y: 1366.7, district: 1 },
-  { name: 'Peak Temple', kind: 'temple', x: 650, y: 360, district: 2 },
-  { name: 'Lakeside Chapel', kind: 'church', x: 1400, y: 366.7, district: 2 },
-  { name: 'Hill Mosque', kind: 'mosque', x: 2200, y: 360, district: 2 },
+  { name: 'Peak Temple', kind: 'temple', x: 650, y: 375, district: 2 },
+  { name: 'Hill Mosque', kind: 'mosque', x: 2180, y: 375, district: 2 },
+];
+
+// v7: vital places — a hospital and a police station per district, spread
+// across the city like the worship places (never two in one block). kind:
+// 'hospital' (white hall, red-cross roof marker) or 'police' (navy hall,
+// blue light bar). x/y is the centre of the plot; world.js builds the
+// hall around it the same way it builds a worship hall, and map.js lists
+// each one as a GPS destination.
+export const VITAL_PLACES = [
+  { name: 'Neon Bay General Hospital', kind: 'hospital', x: 1050, y: 950, district: 0 },
+  { name: 'Downtown Police HQ', kind: 'police', x: 450, y: 1250, district: 0 },
+  { name: 'Sunset Beach Clinic', kind: 'hospital', x: 1700, y: 1230, district: 1 },
+  { name: 'Harbor Police Post', kind: 'police', x: 2060, y: 930, district: 1 },
+  { name: 'Mountain Clinic', kind: 'hospital', x: 1000, y: 180, district: 2 },
+  { name: 'Peak Ranger Station', kind: 'police', x: 2170, y: 180, district: 2 },
 ];
 
 // v4: Peaks settlement — houses placed ALONG the mountain roads (y=450,
