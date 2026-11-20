@@ -35,6 +35,7 @@ import { hideActivityCanvas, startActivity, startRaceChallenge, startSwimChallen
 import { initAudio, playSfx, setListenerPosition } from './audio.js';
 import { stageShot } from './shots.js';
 import { CLOTHES } from './config.js';
+import { clearNav, createMapController, getDestinations, navRemaining, rebuildNavRoute, setDestination } from './map.js';
 
 const MAX_FRAME = 0.25;
 
@@ -94,6 +95,34 @@ function refreshShopPanel() {
   const titles = { food: shop.name + ' — Food', gun: shop.name + ' — Guns & Ammo', clothes: shop.name + ' — Clothes', mods: shop.name + ' — Car Mods' };
   ui.showShop(shop.kind, titles[shop.kind] || shop.name, shopItemsFor(state, shop.kind), state.money);
 }
+
+// --- Interactive map (map.js): the DOM panel, the HUD button, the touch
+// button. While it is open the game is truly paused (the loop below never
+// steps the world), and closing it resumes exactly where it stopped.
+const mapCtl = createMapController({
+  getState: () => state,
+  getWorld: () => world,
+  onClose: () => closeMap(),
+});
+function openMap() {
+  if (state.screen !== SCREEN_PLAY || state.showMap) return;
+  state.showMap = true;
+  mapCtl.open();
+}
+function closeMap() {
+  if (!state.showMap) return;
+  state.showMap = false;
+  mapCtl.close();
+}
+function toggleMap() {
+  if (state.showMap) closeMap();
+  else openMap();
+}
+const btnMapEl = document.getElementById('btnMap');
+if (btnMapEl) btnMapEl.addEventListener('click', () => toggleMap());
+const btnMapTouchEl = document.getElementById('btnMapTouch');
+if (btnMapTouchEl) btnMapTouchEl.addEventListener('click', () => toggleMap());
+let btnMapShown = false;
 
 const ui = createUI({
   onNewGame() {
@@ -316,11 +345,11 @@ function stepPlay(dt, input) {
   const ePressed = input.pressed('KeyE');
   const fPressed = input.pressed('KeyF');
   const qPressed = input.pressed('KeyQ');
-  const mPressed = input.pressed('KeyM');
   const gPressed = input.pressed('KeyG');
   if (ePressed) handleInteract();
   if (fPressed) handleEnterVehicle();
-  if (mPressed) state.showMap = !state.showMap;
+  // M toggles the map in the frame loop (main.js), not here: while the map
+  // is open stepPlay never runs, so a toggle here could never close it.
   if (gPressed && state.playerVehicle) {
     const hero = activeCharacter(state);
     if (Math.hypot(hero.x - 560, hero.y - 1620) < 220) storeCurrentCar(state);
@@ -341,6 +370,27 @@ function stepPlay(dt, input) {
   decayWanted(state, dt, state.policeCanSee);
   updateMissions(state, dt);
   updatePickups(state);
+  // GPS navigation: arrive, re-route from the new position every few
+  // seconds, and drop a mission destination whose mission is gone.
+  if (state.nav) {
+    if (state.nav.kind === 'mission' && !state.missions.active) {
+      clearNav(state);
+    } else {
+      const remaining = navRemaining(state);
+      if (remaining < 90) {
+        const label = state.nav.label;
+        clearNav(state);
+        showMessage(state, `Arrived at ${label}.`);
+        playSfx('mission');
+      } else {
+        state.navRepath = (state.navRepath || 0) + dt;
+        if (state.navRepath > 3) {
+          state.navRepath = 0;
+          rebuildNavRoute(state, world);
+        }
+      }
+    }
+  }
   updateCombat(state, dt, input, mouseWorld(input));
   updateBullets(state, world, dt);
   updateRaceChallenge(state, dt);
@@ -383,6 +433,8 @@ function stepPlay(dt, input) {
 function runShot(name) {
   buildEntities();
   const scene = stageShot(name, state, world);
+  // The map shot opens the real map panel (DOM) over the staged scene.
+  if (name === 'map') mapCtl.open();
   // The title panel is DOM, not canvas: hide it for play scenes or it
   // would cover the staged frame. The start shot keeps it.
   if (scene.screen === SCREEN_TITLE) ui.showStart(!!loadSaveData());
@@ -440,6 +492,12 @@ function runGame() {
     const heroNow = activeCharacter(state);
     setListenerPosition(heroNow.x, heroNow.y);
     if (state.screen !== SCREEN_ACTIVITY) hideActivityCanvas();
+    // The HUD map button only shows during play.
+    const wantMapBtn = state.screen === SCREEN_PLAY;
+    if (wantMapBtn !== btnMapShown) {
+      btnMapShown = wantMapBtn;
+      if (btnMapEl) btnMapEl.style.display = wantMapBtn ? '' : 'none';
+    }
     if (state.screen === SCREEN_PLAY) ui.showOrbitHintOnce();
     const actions = input.takeActions();
     if (actions & ACTION_CONFIRM) {
@@ -461,7 +519,11 @@ function runGame() {
       }
     }
     if (actions & ACTION_PAUSE) {
-      if (state.screen === SCREEN_PLAY) {
+      if (state.showMap) {
+        // Esc / P closes the map first — it never opens the pause menu
+        // from behind the map.
+        closeMap();
+      } else if (state.screen === SCREEN_PLAY) {
         state.screen = SCREEN_PAUSED;
         ui.showPause();
         announce('Paused.');
@@ -490,16 +552,29 @@ function runGame() {
       renderer.draw(state, world, SCREEN_TITLE, t);
       input.clearStaleEdges();
     } else if (state.screen === SCREEN_PLAY || state.screen === SCREEN_ACTIVITY) {
-      accumulator += elapsed;
-      while (accumulator >= STEP) {
-        stepPlay(STEP, input);
-        accumulator -= STEP;
-        if (state.screen !== SCREEN_PLAY && state.screen !== SCREEN_ACTIVITY) break;
+      // M toggles the map (open or close) from play.
+      if (state.screen === SCREEN_PLAY && input.pressed('KeyM')) toggleMap();
+      if (state.showMap) {
+        // The map is open: the world is truly paused — no stepping, no
+        // clock, no movement. The frame only paints the frozen scene
+        // behind the DOM map panel, and drops any input that arrives.
+        accumulator = 0;
+        input.takeOrbit();
+        input.clearStaleEdges();
+        input.endFrame();
+        renderer.draw(state, world, state.screen, now / 1000);
+      } else {
+        accumulator += elapsed;
+        while (accumulator >= STEP) {
+          stepPlay(STEP, input);
+          accumulator -= STEP;
+          if (state.screen !== SCREEN_PLAY && state.screen !== SCREEN_ACTIVITY) break;
+        }
+        // Clicks are cleared after the steps read them, before the draw,
+        // so a click that lands while drawing is read by the next frame.
+        input.endFrame();
+        renderer.draw(state, world, state.screen, now / 1000);
       }
-      // Clicks are cleared after the steps read them, before the draw,
-      // so a click that lands while drawing is read by the next frame.
-      input.endFrame();
-      renderer.draw(state, world, state.screen, now / 1000);
     } else {
       accumulator = 0;
       renderer.draw(state, world, state.screen, now / 1000);
@@ -525,7 +600,31 @@ function runGame() {
 }
 
 // Debug hook for automated play-testing (read-only from the page's own tests).
-window.__neonBay = { get state() { return state; }, get fps() { return fpsValue; }, world, seed };
+window.__neonBay = {
+  get state() { return state; },
+  get fps() { return fpsValue; },
+  world,
+  seed,
+  map: {
+    open: openMap,
+    close: closeMap,
+    toggle: toggleMap,
+    get showMap() { return state.showMap; },
+    get nav() { return state.nav; },
+    destinations: () => getDestinations(state, world),
+    setDestination: (id) => {
+      const dest = getDestinations(state, world).find((d) => d.id === id);
+      if (!dest) return { ok: false, reason: 'notfound' };
+      return setDestination(state, world, dest);
+    },
+    setRoadDestination: (x, y) => setDestination(state, world, { id: 'road', kind: 'road', label: 'Road point', x, y }),
+    clearNav: () => clearNav(state),
+    remaining: () => navRemaining(state),
+    pickAt: (x, y) => mapCtl.pickAt(x, y),
+    get view() { return mapCtl.view; },
+  },
+  startMission: (i) => startMainMission(state, i),
+};
 
 if (shot) runShot(shot);
 else runGame();

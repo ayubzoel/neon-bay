@@ -73,6 +73,8 @@ export function createGameState(seed) {
     stats: { kills: 0, stolen: 0, earned: 0, missionsDone: 0, sideDone: 0, deaths: 0, racesWon: 0 },
     activity: null,
     shop: null,
+    nav: null,
+    navRepath: 0,
     dialog: null,
     interior: null,
     message: '',

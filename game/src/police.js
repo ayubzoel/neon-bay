@@ -17,10 +17,14 @@ function spawnPoint(state, world) {
     const x = hero.x + Math.cos(angle) * dist;
     const y = hero.y + Math.sin(angle) * dist;
     if (x < 40 || y < 40 || x > 9560 || y > 5360) continue;
-    if (world.collides(x, y, 20, state.unlocked)) continue;
-    return { x, y };
+    // Spawn ON a lane, not in a random spot: the nearest lane point to the
+    // random offset, so the unit starts on the road and stays there.
+    const lane = world.graph ? world.graph.nearestLanePoint(x, y) : { x, y };
+    if (world.collides(lane.x, lane.y, 20, state.unlocked)) continue;
+    return { x: lane.x, y: lane.y };
   }
-  return { x: hero.x + 650, y: hero.y };
+  const lane = world.graph ? world.graph.nearestLanePoint(hero.x + 650, hero.y) : { x: hero.x + 650, y: hero.y };
+  return { x: lane.x, y: lane.y };
 }
 
 function makePolice(kind, x, y) {
@@ -30,7 +34,7 @@ function makePolice(kind, x, y) {
     heli: { speed: 260, hp: 120 },
     tank: { speed: 120, hp: 400 },
   }[kind];
-  return { kind, x, y, angle: 0, speed: 0, hp: stats.hp, maxHp: stats.hp, shootCd: 1 + Math.random(), ramCd: 0, path: null, pathIdx: 0, repathCd: 0 };
+  return { kind, x, y, angle: 0, speed: 0, hp: stats.hp, maxHp: stats.hp, shootCd: 1 + Math.random(), ramCd: 0, path: null, pathIdx: 0, repathCd: 0, pathTarget: null, lastX: x, lastY: y, stuckT: 0 };
 }
 
 function maintainForce(state, world) {
@@ -70,6 +74,113 @@ function steerToward(p, tx, ty, dt, turnRate) {
   p.angle += Math.max(-turnRate * dt, Math.min(turnRate * dt, diff));
 }
 
+// Lane waypoints for a node path: each leg is driven in its right-hand
+// lane (14 units off the centreline), two points per leg — mid-leg and
+// just before the next intersection — so the unit never has to cut a
+// corner across a block. The final point is the nearest lane point to
+// the player, so the unit holds on the road and shoots from there
+// instead of driving onto the sidewalk the player stands on.
+function laneWaypoints(nodePath, tx, ty, graph) {
+  const pts = [];
+  for (let i = 0; i + 1 < nodePath.length; i += 1) {
+    const a = nodePath[i];
+    const b = nodePath[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    // Right of the direction of travel (y grows south): (-dy, dx).
+    const rx = -uy;
+    const ry = ux;
+    const mid = { x: (a.x + b.x) / 2 + rx * 14, y: (a.y + b.y) / 2 + ry * 14 };
+    const end = { x: b.x - ux * 30 + rx * 14, y: b.y - uy * 30 + ry * 14 };
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(mid.x - last.x, mid.y - last.y) > 4) pts.push(mid);
+    pts.push(end);
+  }
+  if (graph) {
+    const lane = graph.nearestLanePoint(tx, ty);
+    const last = pts[pts.length - 1];
+    if (!last || Math.hypot(lane.x - last.x, lane.y - last.y) > 4) pts.push({ x: lane.x, y: lane.y });
+  } else {
+    pts.push({ x: tx, y: ty });
+  }
+  return pts;
+}
+
+// Ground chase (cars, bikes, tanks): follow the road graph in the lane.
+// Re-paths ONLY when needed — no path, path finished, the target moved
+// far from the one this path was built for, or the unit is stuck.
+// (The old code re-pathed every 1.2 s and reset pathIdx to 0, so the unit
+// almost always steered at the first waypoint — straight across whatever
+// block lay between it and the player — and spawned off-road.)
+function chaseGround(state, world, p, tx, ty, dt, top, turnRate, accel) {
+  // Police staged by shots.js predate these fields — normalise them.
+  if (p.stuckT === undefined) p.stuckT = 0;
+  if (p.lastX === undefined) { p.lastX = p.x; p.lastY = p.y; }
+  const dist = Math.hypot(tx - p.x, ty - p.y);
+  const targetMoved = !p.pathTarget || Math.hypot(tx - p.pathTarget.x, ty - p.pathTarget.y) > 400;
+  if (!p.path || p.pathIdx >= p.path.length || targetMoved || p.stuckT > 1.2) {
+    const nodePath = world.graph.findPath(p.x, p.y, tx, ty, state.unlocked);
+    if (nodePath && nodePath.length > 1) {
+      p.path = laneWaypoints(nodePath, tx, ty, world.graph);
+      p.pathIdx = 0;
+      p.pathTarget = { x: tx, y: ty };
+    } else {
+      p.path = null;
+      p.pathTarget = { x: tx, y: ty };
+    }
+    p.stuckT = 0;
+  }
+  let wx = tx;
+  let wy = ty;
+  if (p.path && p.pathIdx < p.path.length) {
+    wx = p.path[p.pathIdx].x;
+    wy = p.path[p.pathIdx].y;
+    const reach = p.kind === 'tank' ? 55 : 45;
+    if (Math.hypot(wx - p.x, wy - p.y) < reach) {
+      p.pathIdx += 1;
+      if (p.pathIdx < p.path.length) {
+        wx = p.path[p.pathIdx].x;
+        wy = p.path[p.pathIdx].y;
+      }
+    }
+  }
+  // Hold on the road once close: shoot from the lane instead of driving
+  // onto the sidewalk (or the park) where the player stands.
+  const hold = dist < 130;
+  const target = Math.atan2(wy - p.y, wx - p.x);
+  let diff = target - p.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  const turn = hold ? turnRate * 1.5 : turnRate;
+  p.angle += Math.max(-turn * dt, Math.min(turn * dt, diff));
+  // Slow for sharp turns: a fast car cannot make a 90-degree corner
+  // inside a 64-wide street, so it cuts the block. A slow car can.
+  const want = hold ? 0 : top * (Math.abs(diff) > 0.9 ? 0.35 : Math.abs(diff) > 0.45 ? 0.6 : 1);
+  p.speed += Math.max(-520 * dt, Math.min(accel * dt, want - p.speed));
+  if (p.speed < 0) p.speed = 0;
+  const nx = p.x + Math.cos(p.angle) * p.speed * dt;
+  const ny = p.y + Math.sin(p.angle) * p.speed * dt;
+  // Axis-separated movement slides along a wall instead of stopping dead.
+  const r = p.kind === 'tank' ? 22 : 14;
+  if (!world.collides(nx, p.y, r, state.unlocked)) p.x = nx;
+  if (!world.collides(p.x, ny, r, state.unlocked)) p.y = ny;
+  // Stuck: barely moving while trying to drive means the road ahead is
+  // blocked — re-path (with a steering nudge) instead of grinding a wall.
+  const moved = Math.hypot(p.x - p.lastX, p.y - p.lastY);
+  if (p.speed > 50 && moved < p.speed * dt * 0.3) {
+    p.stuckT += dt;
+    if (p.stuckT > 1.2) p.angle += (Math.random() - 0.5) * 1.4;
+  } else {
+    p.stuckT = Math.max(0, p.stuckT - dt * 2);
+  }
+  p.lastX = p.x;
+  p.lastY = p.y;
+  return { dist, hold };
+}
+
 export function updatePolice(state, world, dt) {
   maintainForce(state, world);
   const hero = activeCharacter(state);
@@ -99,80 +210,15 @@ export function updatePolice(state, world, dt) {
       p.y += Math.sin(p.angle) * p.speed * dt;
       policeShoot(state, p, targetX, targetY);
     } else if (p.kind === 'tank') {
-      // Ground units chase along the road graph (v3): re-path to the
-      // player's nearest intersection every ~1.2 s, follow the waypoints,
-      // and only fall back to a straight line when no road route exists
-      // (e.g. the player is off-road in a park). Tanks take the same route,
-      // just slower. Helicopters still fly straight.
-      p.repathCd -= dt;
-      if (p.repathCd <= 0 || !p.path) {
-        p.repathCd = 1.2;
-        const nodePath = world.graph.findPath(p.x, p.y, targetX, targetY, state.unlocked);
-        if (nodePath && nodePath.length > 1) {
-          p.path = [...nodePath.slice(1), { x: targetX, y: targetY }];
-          p.pathIdx = 0;
-        } else {
-          p.path = null;
-        }
-      }
-      let wx = targetX;
-      let wy = targetY;
-      if (p.path && p.pathIdx < p.path.length) {
-        wx = p.path[p.pathIdx].x;
-        wy = p.path[p.pathIdx].y;
-        if (Math.hypot(wx - p.x, wy - p.y) < 46) {
-          p.pathIdx += 1;
-          if (p.pathIdx < p.path.length) {
-            wx = p.path[p.pathIdx].x;
-            wy = p.path[p.pathIdx].y;
-          }
-        }
-      }
-      steerToward(p, wx, wy, dt, 0.9);
-      p.speed = Math.min(120, p.speed + 60 * dt);
-      const nx = p.x + Math.cos(p.angle) * p.speed * dt;
-      const ny = p.y + Math.sin(p.angle) * p.speed * dt;
-      if (!world.collides(nx, ny, 22, state.unlocked)) {
-        p.x = nx;
-        p.y = ny;
-      }
+      // Ground units chase along the road graph (v3, fixed in the map
+      // build): lane waypoints, re-path only when needed, slow for
+      // corners, hold on the road once close. Helicopters still fly straight.
+      chaseGround(state, world, p, targetX, targetY, dt, 120, 1.4, 60);
       policeShoot(state, p, targetX, targetY);
     } else {
-      p.repathCd -= dt;
-      if (p.repathCd <= 0 || !p.path) {
-        p.repathCd = 1.2;
-        const nodePath = world.graph.findPath(p.x, p.y, targetX, targetY, state.unlocked);
-        if (nodePath && nodePath.length > 1) {
-          p.path = [...nodePath.slice(1), { x: targetX, y: targetY }];
-          p.pathIdx = 0;
-        } else {
-          p.path = null;
-        }
-      }
-      let wx = targetX;
-      let wy = targetY;
-      if (p.path && p.pathIdx < p.path.length) {
-        wx = p.path[p.pathIdx].x;
-        wy = p.path[p.pathIdx].y;
-        if (Math.hypot(wx - p.x, wy - p.y) < 40) {
-          p.pathIdx += 1;
-          if (p.pathIdx < p.path.length) {
-            wx = p.path[p.pathIdx].x;
-            wy = p.path[p.pathIdx].y;
-          }
-        }
-      }
-      const top = p.kind === 'bike' ? 390 : 330;
-      steerToward(p, wx, wy, dt, 2.6);
-      p.speed = Math.min(top, p.speed + 260 * dt);
-      const nx = p.x + Math.cos(p.angle) * p.speed * dt;
-      const ny = p.y + Math.sin(p.angle) * p.speed * dt;
-      if (!world.collides(nx, p.y, 14, state.unlocked)) p.x = nx;
-      else p.angle += Math.PI / 3;
-      if (!world.collides(p.x, ny, 14, state.unlocked)) p.y = ny;
-      else p.angle -= Math.PI / 3;
+      const res = chaseGround(state, world, p, targetX, targetY, dt, p.kind === 'bike' ? 390 : 330, p.kind === 'bike' ? 3.0 : 2.8, 260);
       policeShoot(state, p, targetX, targetY);
-      if (dist < 30 && p.ramCd <= 0) {
+      if (res.dist < 30 && p.ramCd <= 0) {
         p.ramCd = 1;
         state.bullets.push({ x: p.x, y: p.y, vx: 0, vy: 0, damage: 8, from: 'police', life: 0.01, blast: 0, kind: 'ram' });
       }

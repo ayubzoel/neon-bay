@@ -5,6 +5,7 @@
 // window.__shotReady for the screenshot.
 import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { startMainMission } from './missions.js';
+import { setDestination } from './map.js';
 
 function placeHeroInCar(state, x, y, angle) {
   const hero = state.hero;
@@ -25,6 +26,7 @@ function placePolice(state, positions) {
   state.police = positions.map(([kind, x, y]) => ({
     kind, x, y, angle: Math.PI, speed: 200, hp: kind === 'tank' ? 400 : kind === 'heli' ? 120 : 80,
     maxHp: kind === 'tank' ? 400 : kind === 'heli' ? 120 : 80, shootCd: 2, ramCd: 0,
+    path: null, pathIdx: 0, repathCd: 0, pathTarget: null, lastX: x, lastY: y, stuckT: 0,
   }));
 }
 
@@ -115,6 +117,28 @@ export function stageShot(name, state, world) {
     state.camera.dist = 320;
     placePolice(state, [['car', 3900, 1450]]);
     state.objective = 'Side job: Deliver the package to Pier 9 before dawn.';
+    return { screen: SCREEN_PLAY };
+  }
+  if (name === 'map') {
+    state.screen = SCREEN_PLAY;
+    state.time.minutes = 10 * 60 + 15;
+    state.season = 'summer';
+    state.rain = 0;
+    state.money = 1250;
+    state.wanted = 0;
+    startMainMission(state, 0);
+    // Heading north up avenue 1500, same staging as the play shot, so the
+    // frozen 3D scene behind the map is the real game.
+    placeHeroInCar(state, 1500, 1900, -Math.PI / 2);
+    state.camera.x = 1500;
+    state.camera.y = 1900;
+    state.camera.yaw = Math.PI;
+    state.camera.pitch = 0.45;
+    state.camera.dist = 260;
+    // GPS to the airport: a long route across downtown, visible on the map
+    // with its symbols and legend. main.js opens the map panel for this shot.
+    setDestination(state, world, { id: 'airport', kind: 'airport', label: 'Airport — Cargo Terminal', x: 4650, y: 4710 });
+    state.showMap = true;
     return { screen: SCREEN_PLAY };
   }
   return { screen: SCREEN_TITLE };

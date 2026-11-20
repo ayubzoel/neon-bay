@@ -33,6 +33,43 @@
   .keys b { color: #e2e8f0; }
   #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); background: rgba(20, 25, 38, 0.92); color: #fde68a; border: 1px solid #f59e0b; border-radius: 10px; padding: 10px 18px; font-weight: 700; z-index: 15; pointer-events: none; opacity: 0; transition: opacity 0.2s; max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; }
+  /* HUD map button: under the minimap, top-right. */
+  #btnMap { position: fixed; right: 14px; top: 172px; z-index: 8; padding: 9px 14px; font-size: 15px; font-weight: 800; color: #fde68a; background: rgba(20,25,38,0.88); border: 1px solid #f59e0b; border-radius: 10px; cursor: pointer; }
+  #btnMap:hover { background: rgba(245,158,11,0.35); }
+  /* Full-screen interactive map (DOM panel over the frozen game). */
+  #mapPanel { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: rgba(5,8,16,0.97); color: #eef1f5; padding: 12px; box-sizing: border-box; }
+  #mapPanel.hidden { display: none; }
+  #mapHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 2px 4px 10px; }
+  #mapHead h2 { margin: 0; font-size: 22px; letter-spacing: 2px; color: #22d3ee; }
+  #mapDest { margin: 2px 0 0; color: #a5f3fc; font-size: 14px; font-weight: 700; }
+  #btnCloseMap { width: auto; margin: 0; padding: 10px 18px; flex: 0 0 auto; }
+  #mapBody { flex: 1; display: flex; gap: 12px; min-height: 0; }
+  #mapWrap { flex: 1; position: relative; min-width: 0; border: 2px solid #334155; border-radius: 12px; overflow: hidden; background: #0b0e14; }
+  #mapCanvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+  #mapZoom { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  #mapZoom button { width: 44px; height: 44px; font-size: 24px; font-weight: 800; color: #f8fafc; background: rgba(20,25,38,0.9); border: 1px solid #64748b; border-radius: 10px; cursor: pointer; }
+  #mapZoom button:hover { background: rgba(34,211,238,0.5); }
+  #mapSide { width: 288px; flex: 0 0 auto; overflow-y: auto; background: #141926; border: 1px solid #263048; border-radius: 12px; padding: 12px; box-sizing: border-box; }
+  #mapSide h3 { margin: 12px 0 6px; font-size: 14px; letter-spacing: 1px; color: #f59e0b; text-transform: uppercase; }
+  #mapSide h3:first-child { margin-top: 0; }
+  #btnCancelNav { width: 100%; margin: 0 0 4px; }
+  #btnCancelNav.hidden { display: none; }
+  .map-list-group { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: #94a3b8; text-transform: uppercase; margin: 10px 0 4px; }
+  .map-dest { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; margin: 2px 0; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; }
+  .map-dest:hover:not(:disabled) { border-color: #22d3ee; background: #0e7490; }
+  .map-dest.selected { border-color: #fde047; background: #422006; }
+  .map-dest:disabled { opacity: 0.55; cursor: not-allowed; }
+  .map-dest-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .map-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; font-size: 14px; line-height: 1; }
+  .map-legend-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; color: #cbd5e1; }
+  .mapHint { font-size: 12px; color: #94a3b8; line-height: 1.5; }
+  @media (max-width: 700px) {
+    #mapBody { flex-direction: column; }
+    #mapWrap { flex: 1 1 55%; }
+    #mapSide { width: 100%; flex: 0 0 auto; max-height: 38%; }
+    #mapHead h2 { font-size: 17px; }
+    #btnMap { top: auto; bottom: 210px; right: 12px; }
+  }
   #touch { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: none; touch-action: none; }
   #touch.on { display: block; }
   #stick { position: absolute; left: 18px; bottom: 24px; width: 128px; height: 128px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.25); pointer-events: auto; touch-action: none; }
@@ -43,6 +80,7 @@
   #btnEnter { right: 100px; bottom: 40px; }
   #btnInteract { right: 24px; bottom: 176px; }
   #btnRun { right: 180px; bottom: 40px; }
+  #btnMapTouch { right: 100px; bottom: 120px; }
   @media (max-width: 640px) {
     .card h1 { font-size: 30px; }
     .card { padding: 16px; }
@@ -141,12 +179,42 @@
 
 <div id="toast"></div>
 
+<button id="btnMap" title="Open the map (M)" style="display:none">🗺️ Map — M</button>
+
+<div id="mapPanel" class="hidden">
+  <div id="mapHead">
+    <div>
+      <h2>NEON BAY — MAP</h2>
+      <p id="mapDest">No destination — pick a place or tap a road</p>
+    </div>
+    <button class="btn secondary" id="btnCloseMap">Close ✕ (M)</button>
+  </div>
+  <div id="mapBody">
+    <div id="mapWrap">
+      <canvas id="mapCanvas"></canvas>
+      <div id="mapZoom">
+        <button id="btnZoomIn" title="Zoom in">+</button>
+        <button id="btnZoomOut" title="Zoom out">−</button>
+      </div>
+    </div>
+    <div id="mapSide">
+      <button class="btn danger hidden" id="btnCancelNav">Cancel navigation</button>
+      <h3>Destinations</h3>
+      <div id="mapList"></div>
+      <h3>Legend</h3>
+      <div id="mapLegend"></div>
+      <p class="mapHint">Scroll / pinch to zoom · drag to pan · click a place or a road to set GPS. Grey districts are locked — finish the mission to open them. The game is paused while the map is open.</p>
+    </div>
+  </div>
+</div>
+
 <div id="touch">
   <div id="stick"><div id="stickKnob"></div></div>
   <button class="tbtn" id="btnFire">FIRE</button>
   <button class="tbtn" id="btnEnter">CAR</button>
   <button class="tbtn" id="btnInteract">E</button>
   <button class="tbtn" id="btnRun">RUN</button>
+  <button class="tbtn" id="btnMapTouch">MAP</button>
 </div>
 
 <script src="./vendor/three.min.js"></script>

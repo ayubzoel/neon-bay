@@ -9,7 +9,7 @@
 // Per-frame entities go through the mesh pool (Map id -> Object3D): modules
 // get-or-build their meshes and the pool drops whatever a frame did not touch.
 // HUD + minimap + map overlay live on the 2D #hud canvas above the WebGL one.
-import { DISTRICT_RECTS, SAFE_HOUSE, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+import { DISTRICT_RECTS, WATER_RECTS, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import { clockText } from './state.js';
 import { drawCharacter } from './player.js';
 import { drawVehicles } from './vehicles.js';
@@ -22,6 +22,7 @@ import { drawShopSigns } from './shops.js';
 import { drawActivity, hideActivityCanvas } from './activities.js';
 import { updateNightGlow } from './textures.js';
 import { WEAPONS } from './config.js';
+import { getDestinations, navPathFromPlayer, navRemaining, SYMBOLS } from './map.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -181,6 +182,39 @@ export function createRenderer(canvas) {
     }
     hctx.fillStyle = '#0e7490';
     for (const w of WATER_RECTS) hctx.fillRect(x0 + w.x * sx, y0 + w.y * sy, w.w * sx, w.h * sy);
+    // GPS route along the roads, drawn before the markers so they sit on top.
+    const navPts = navPathFromPlayer(state);
+    if (navPts && navPts.length > 1) {
+      hctx.strokeStyle = '#22d3ee';
+      hctx.lineWidth = 2;
+      hctx.beginPath();
+      navPts.forEach((p, i) => {
+        if (i === 0) hctx.moveTo(x0 + p.x * sx, y0 + p.y * sy);
+        else hctx.lineTo(x0 + p.x * sx, y0 + p.y * sy);
+      });
+      hctx.stroke();
+    }
+    // Small symbols for every kind of place (same colours as the big map).
+    for (const dest of getDestinations(state, state.world)) {
+      const dx = x0 + dest.x * sx;
+      const dy = y0 + dest.y * sy;
+      if (dest.locked) continue;
+      const color = (SYMBOLS[dest.kind] || SYMBOLS.road).color;
+      hctx.fillStyle = color;
+      if (dest.kind === 'mission') {
+        hctx.save();
+        hctx.translate(dx, dy);
+        hctx.rotate(Math.PI / 4);
+        hctx.fillRect(-3.5, -3.5, 7, 7);
+        hctx.restore();
+      } else if (dest.kind === 'side') {
+        hctx.beginPath();
+        hctx.arc(dx, dy, 3.5, 0, Math.PI * 2);
+        hctx.fill();
+      } else {
+        hctx.fillRect(dx - 2.5, dy - 2.5, 5, 5);
+      }
+    }
     const hero = state.hero;
     const active = state.missions.active || state.missions.activeSide;
     if (active) {
@@ -193,14 +227,22 @@ export function createRenderer(canvas) {
       hctx.fillStyle = '#ef4444';
       hctx.fillRect(x0 + p.x * sx - 2, y0 + p.y * sy - 2, 4, 4);
     }
+    // The player: a gold arrow pointing the way Leo faces.
+    hctx.save();
+    hctx.translate(x0 + hero.x * sx, y0 + hero.y * sy);
+    hctx.rotate(hero.angle || 0);
     hctx.fillStyle = '#fde047';
     hctx.beginPath();
-    hctx.arc(x0 + hero.x * sx, y0 + hero.y * sy, 5, 0, Math.PI * 2);
+    hctx.moveTo(7, 0);
+    hctx.lineTo(-5, -5);
+    hctx.lineTo(-5, 5);
+    hctx.closePath();
     hctx.fill();
+    hctx.restore();
     hctx.strokeStyle = '#f8fafc';
     hctx.lineWidth = 1;
     hctx.beginPath();
-    hctx.arc(x0 + hero.x * sx, y0 + hero.y * sy, 7, 0, Math.PI * 2);
+    hctx.arc(x0 + hero.x * sx, y0 + hero.y * sy, 8, 0, Math.PI * 2);
     hctx.stroke();
     hctx.restore();
   }
@@ -227,9 +269,32 @@ export function createRenderer(canvas) {
     for (let i = 0; i < 5; i += 1) {
       text('★', sx + i * 30, 178, 26, i < state.wanted ? '#fbbf24' : 'rgba(255,255,255,0.25)', 'left', true);
     }
-    // Clock, season and day, top-centre.
+    // Clock, season and day, top-centre — on a dark pill so the white text
+    // stays readable against a bright noon sky (tester report: low
+    // contrast at 10:15 in daylight).
     const seasonLabel = state.season === 'rainy' ? 'Rainy Season' : 'Summer';
-    text(`${clockText(state)}  ·  Day ${state.time.day}  ·  ${seasonLabel}`, view.w / 2, 30, 17, '#e2e8f0', 'center', true);
+    const clockLabel = `${clockText(state)}  ·  Day ${state.time.day}  ·  ${seasonLabel}`;
+    hctx.font = `bold 17px ${FONT}`;
+    const clockW = hctx.measureText(clockLabel).width;
+    hctx.fillStyle = 'rgba(10,14,22,0.78)';
+    hctx.beginPath();
+    if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - clockW / 2 - 12, 12, clockW + 24, 28, 14);
+    else hctx.rect(view.w / 2 - clockW / 2 - 12, 12, clockW + 24, 28);
+    hctx.fill();
+    text(clockLabel, view.w / 2, 32, 17, '#f8fafc', 'center', true);
+    // GPS: destination + remaining distance, under the clock.
+    if (state.nav) {
+      const gpsLabel = `GPS ▸ ${state.nav.label} — ${navRemaining(state)} m`;
+      const gpsText = fitText(gpsLabel, 14, Math.min(560, view.w - 40));
+      hctx.font = `bold 14px ${FONT}`;
+      const gpsW = hctx.measureText(gpsText).width;
+      hctx.fillStyle = 'rgba(8,47,73,0.85)';
+      hctx.beginPath();
+      if (typeof hctx.roundRect === 'function') hctx.roundRect(view.w / 2 - gpsW / 2 - 10, 44, gpsW + 20, 24, 12);
+      else hctx.rect(view.w / 2 - gpsW / 2 - 10, 44, gpsW + 20, 24);
+      hctx.fill();
+      text(gpsText, view.w / 2, 61, 14, '#a5f3fc', 'center', true);
+    }
     // Objective, bottom-left — text clipped to the bar so it can never
     // run under the weapon readout at the bottom-right.
     hctx.fillStyle = 'rgba(10,14,22,0.75)';
@@ -252,48 +317,63 @@ export function createRenderer(canvas) {
     void time;
   }
 
-  function drawMapOverlay(state) {
-    hctx.save();
-    hctx.fillStyle = 'rgba(5,8,16,0.9)';
-    hctx.fillRect(0, 0, view.w, view.h);
-    const mw = Math.min(view.w - 60, 900);
-    const mh = mw * (WORLD_HEIGHT / WORLD_WIDTH);
-    const x0 = (view.w - mw) / 2;
-    const y0 = (view.h - mh) / 2;
-    const sx = mw / WORLD_WIDTH;
-    const sy = mh / WORLD_HEIGHT;
-    for (let i = 0; i < DISTRICT_RECTS.length; i += 1) {
-      const r = DISTRICT_RECTS[i];
-      hctx.fillStyle = GROUND[i];
-      hctx.fillRect(x0 + r.x * sx, y0 + r.y * sy, r.w * sx, r.h * sy);
+  // --- 3D navigation aids ------------------------------------------------
+  // The full map lives in the DOM panel (map.js); what the 3D world shows
+  // is the GPS guidance itself: a light beacon over the destination and a
+  // chain of flat arrows lying on the road along the route.
+  function drawNav3D(state, time) {
+    const nav = state.nav;
+    if (!nav || !nav.path || nav.path.length < 2) return;
+    const T = (typeof globalThis !== 'undefined' && globalThis.THREE) || null;
+    if (!T) return;
+    const beacon = pool.get('nav-beacon', () => {
+      const m = new T.Mesh(
+        new T.CylinderGeometry(20, 20, 220, 12, 1, true),
+        new T.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.28, side: T.DoubleSide, depthWrite: false }),
+      );
+      return m;
+    });
+    beacon.position.set(nav.x, 110, nav.y);
+    beacon.visible = true;
+    const cone = pool.get('nav-cone', () => {
+      const m = new T.Mesh(
+        new T.ConeGeometry(14, 26, 4),
+        new T.MeshBasicMaterial({ color: 0x22d3ee }),
+      );
+      return m;
+    });
+    cone.position.set(nav.x, 60 + Math.sin(time * 3) * 6, nav.y);
+    cone.rotation.y = time;
+    cone.visible = true;
+    // Flat arrows on the road, one every ~180 world units along the route
+    // from the player. The cone geometry is pre-rotated to point along +Z,
+    // so a Y rotation aims it down the road.
+    const pts = navPathFromPlayer(state);
+    if (pts && pts.length > 1) {
+      let placed = 0;
+      for (let i = 0; i + 1 < pts.length && placed < 40; i += 1) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.floor(len / 180);
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        for (let k = 1; k <= steps && placed < 40; k += 1) {
+          const t = k / (steps + 1);
+          const x = a.x + (b.x - a.x) * t;
+          const y = a.y + (b.y - a.y) * t;
+          const idx = placed;
+          placed += 1;
+          const arrow = pool.get(`nav-arrow-${idx}`, () => {
+            const geo = new T.ConeGeometry(9, 20, 4);
+            geo.rotateX(Math.PI / 2);
+            return new T.Mesh(geo, new T.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.9 }));
+          });
+          arrow.position.set(x, 4, y);
+          arrow.rotation.set(0, Math.PI / 2 - ang, 0);
+          arrow.visible = true;
+        }
+      }
     }
-    hctx.fillStyle = '#0e7490';
-    for (const w of WATER_RECTS) hctx.fillRect(x0 + w.x * sx, y0 + w.y * sy, w.w * sx, w.h * sy);
-    hctx.strokeStyle = '#475569';
-    for (const r of state.world.roads) hctx.strokeRect(x0 + r.x * sx, y0 + r.y * sy, r.w * sx, r.h * sy);
-    hctx.fillStyle = '#f8fafc';
-    hctx.font = 'bold 15px system-ui, sans-serif';
-    hctx.textAlign = 'center';
-    hctx.fillText('NEON BAY — Downtown', x0 + 1500 * sx, y0 + 2200 * sy);
-    hctx.fillText('Sunset Beach', x0 + 7800 * sx, y0 + 3300 * sy);
-    hctx.fillText('Cinder Peaks', x0 + 2400 * sx, y0 + 450 * sy);
-    hctx.fillStyle = '#7c3aed';
-    hctx.fillRect(x0 + SAFE_HOUSE.x * sx - 5, y0 + SAFE_HOUSE.y * sy - 5, 10, 10);
-    const hero = state.hero;
-    hctx.fillStyle = '#fde047';
-    hctx.beginPath();
-    hctx.arc(x0 + hero.x * sx, y0 + hero.y * sy, 8, 0, Math.PI * 2);
-    hctx.fill();
-    const active = state.missions.active || state.missions.activeSide;
-    if (active) {
-      hctx.strokeStyle = '#fde047';
-      hctx.lineWidth = 3;
-      hctx.beginPath();
-      hctx.arc(x0 + active.x * sx, y0 + active.y * sy, 12, 0, Math.PI * 2);
-      hctx.stroke();
-    }
-    text('Map — press M to close', view.w / 2, y0 + mh + 30, 16, '#e2e8f0', 'center', true);
-    hctx.restore();
   }
 
   // --- 3D frame --------------------------------------------------------
@@ -366,6 +446,7 @@ export function createRenderer(canvas) {
     updateNightGlow(state);
 
     drawMissionMarkers(pool, state);
+    drawNav3D(state, time);
     drawShopSigns(pool, world);
     drawVehicles(pool, state, time);
     drawNpcs(pool, state, time);
@@ -386,7 +467,7 @@ export function createRenderer(canvas) {
       hctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
       hctx.clearRect(0, 0, view.w, view.h);
       if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED || screen === SCREEN_ACTIVITY) drawHud(state, time);
-      if (state.showMap) drawMapOverlay(state);
+      // The full map is the DOM panel (map.js), not a canvas overlay.
     }
     if (screen === SCREEN_ACTIVITY) {
       drawActivity(state, { x: 0, y: 0, w: view.w, h: view.h });
